@@ -1,7 +1,7 @@
 {
   "name": "@juiceswap/smart-contracts",
   "version": "1.0.0",
-  "description": "JuiceSwap Smart Contracts - First Squeezer Campaign NFT",
+  "description": "JuiceSwap Smart Contracts",
   "scripts": {
     "compile": "hardhat compile",
     "create-nft": "ts-node scripts/createNFT.ts",

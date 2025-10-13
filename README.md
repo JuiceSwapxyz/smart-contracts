@@ -1,55 +1,91 @@
-# First Squeezer NFT - Smart Contracts
+# JuiceSwap Smart Contracts
 
-Campaign NFT contract for early JuiceSwap supporters on Citrea Testnet.
+Smart contract infrastructure for JuiceSwap protocol on Citrea.
 
-## Features
+## Quick Start
 
+```bash
+# Install dependencies
+npm install
+
+# Configure environment
+cp .env.example .env
+# Add required variables (see .env.example)
+
+# Compile contracts
+npm run compile
+
+# Run tests
+npm test
+```
+
+## Contracts
+
+### FirstSqueezerNFT
+
+Campaign NFT contract for early JuiceSwap supporters.
+
+**Features:**
 - **One mint per address**: Users can only claim once
 - **Deadline enforcement**: Campaign ends October 31, 2025
 - **Signature-based claiming**: Backend API verifies campaign completion
 - **Direct minting**: NFT minted directly to user wallet
 - **Static metadata**: All tokens share same IPFS metadata
 
-## Quick Start
+**Details:**
+- **Contract**: `contracts/FirstSqueezerNFT.sol`
+- **Network**: Citrea Testnet (Chain ID: 5115)
+- **Standard**: ERC-721
+- **Campaign End**: October 31, 2025 23:59:59 UTC
 
-**One command from image to deployed contract:**
+#### Deploy First Squeezer
+
+One command from image to deployed contract:
 
 ```bash
-# 1. Install dependencies
-npm install
-
-# 2. Configure .env (see .env.example)
-cp .env.example .env
-# Add: PINATA_API_KEY, PINATA_SECRET, DEPLOYER_PRIVATE_KEY, CAMPAIGN_SIGNER_ADDRESS
-
-# 3. Create and deploy NFT contract
 npm run create-nft -- "/path/to/your/image.jpeg"
 ```
 
-**That's it!** The script will:
+This will:
 1. Upload image to IPFS (Pinata)
 2. Generate + upload metadata to IPFS
 3. Deploy contract to Citrea Testnet
 4. Output contract address for your API
 
-### Environment Variables
-
-Required in `.env`:
-- `PINATA_API_KEY` - Get at [pinata.cloud](https://app.pinata.cloud/developers/api-keys) (free tier)
+**Environment Variables:**
+- `PINATA_API_KEY` - Get at [pinata.cloud](https://app.pinata.cloud/developers/api-keys)
 - `PINATA_SECRET` - Pinata API secret
 - `DEPLOYER_PRIVATE_KEY` - Wallet private key (must have cBTC for gas)
-- `CAMPAIGN_SIGNER_ADDRESS` - Backend API signer address (for signature verification)
+- `CAMPAIGN_SIGNER_ADDRESS` - Backend API signer address (public address, not private key)
 
-### Post-Deployment
+**Post-Deployment:**
 
 Add contract address to API `.env`:
 ```bash
 FIRST_SQUEEZER_NFT_CONTRACT=0x...  # Copy from deployment output
 ```
 
-## Testing
+#### Architecture
 
-Run the comprehensive test suite (34 tests):
+**Claim Flow:**
+1. User completes Twitter + Discord verification
+2. API generates signature for eligible user
+3. User calls `contract.claim(signature)` (pays gas)
+4. Contract verifies signature from trusted signer
+5. NFT minted directly to user
+
+**Security:**
+- Signature verification using ECDSA
+- One-time claiming enforced by mapping
+- Immutable signer address (set at deployment)
+- Hardcoded deadline (no admin control)
+- CEI pattern (reentrancy safe)
+
+## Development
+
+### Testing
+
+Run the comprehensive test suite:
 
 ```bash
 # Test on clean Hardhat network
@@ -59,7 +95,7 @@ npm test
 FORK_CITREA=true npm test
 ```
 
-All tests verify:
+**Test Coverage:**
 - Deployment & initialization
 - Signature-based claiming
 - Security (reentrancy, replay attacks)
@@ -67,25 +103,13 @@ All tests verify:
 - Static metadata (tokenURI)
 - ERC-721 compliance
 
-## Contract Details
+### Network Configuration
 
-- **Name**: First Squeezer
-- **Symbol**: SQUEEZER
-- **Network**: Citrea Testnet (Chain ID: 5115)
-- **Standard**: ERC-721
-- **Campaign End**: October 31, 2025 23:59:59 UTC
+**Citrea Testnet:**
+- Chain ID: 5115
+- RPC: https://rpc.testnet.citrea.xyz
+- Native Token: cBTC (testnet Bitcoin)
 
-## Architecture
+## License
 
-### Claim Flow
-1. User completes Twitter + Discord verification
-2. API generates signature for eligible user
-3. User calls `contract.claim(signature)`
-4. Contract verifies signature from trusted signer
-5. NFT minted directly to user
-
-### Security
-- Signature verification using ECDSA
-- One-time claiming enforced by mapping
-- Immutable signer address (set at deployment)
-- Hardcoded deadline (no admin control)
+MIT
