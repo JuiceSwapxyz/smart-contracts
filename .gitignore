@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Environment variables (NEVER COMMIT!)
+.env
+
+# Hardhat
+cache/
+artifacts/
+
+# TypeChain
+typechain-types/
+
+# Coverage
+coverage/
+coverage.json
+
+# Hardhat gas reporter
+gasReporterOutput.json
+
+# Logs
+*.log
+
+# OS
+.DS_Store

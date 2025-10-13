@@ -1,0 +1,214 @@
+import { ethers } from "hardhat";
+import axios from "axios";
+import FormData from "form-data";
+import fs from "fs";
+import path from "path";
+import "dotenv/config";
+
+/**
+ * One-Command NFT Deployment
+ *
+ * Creates First Squeezer NFT from image to deployed contract in one step:
+ * 1. Upload image to Pinata IPFS
+ * 2. Generate metadata JSON
+ * 3. Upload metadata to Pinata IPFS
+ * 4. Deploy contract to Citrea Testnet
+ *
+ * Usage:
+ *   npm run create-nft -- "/path/to/image.jpeg"
+ *
+ * Requirements:
+ *   - PINATA_API_KEY in .env
+ *   - PINATA_SECRET in .env
+ *   - DEPLOYER_PRIVATE_KEY in .env (wallet with cBTC)
+ *   - CAMPAIGN_SIGNER_ADDRESS in .env
+ */
+
+const PINATA_API_URL = "https://api.pinata.cloud";
+
+interface PinataResponse {
+  IpfsHash: string;
+  PinSize: number;
+  Timestamp: string;
+}
+
+/**
+ * Validate environment variables
+ */
+function validateEnvironment(): void {
+  const required = [
+    "PINATA_API_KEY",
+    "PINATA_SECRET",
+    "DEPLOYER_PRIVATE_KEY",
+    "CAMPAIGN_SIGNER_ADDRESS",
+  ];
+
+  const missing = required.filter((key) => !process.env[key]);
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required environment variables: ${missing.join(", ")}\n` +
+        "Please configure .env file (see .env.example)"
+    );
+  }
+}
+
+/**
+ * Upload image to Pinata IPFS
+ */
+async function uploadImage(imagePath: string): Promise<string> {
+  console.log("📤 Uploading image to IPFS...");
+
+  // Validate file exists
+  if (!fs.existsSync(imagePath)) {
+    throw new Error(`Image not found: ${imagePath}`);
+  }
+
+  // Validate file type
+  const ext = path.extname(imagePath).toLowerCase();
+  if (![".jpg", ".jpeg", ".png", ".gif", ".webp"].includes(ext)) {
+    throw new Error(`Unsupported image type: ${ext}`);
+  }
+
+  // Create form data
+  const formData = new FormData();
+  formData.append("file", fs.createReadStream(imagePath));
+
+  const metadata = JSON.stringify({
+    name: path.basename(imagePath),
+  });
+  formData.append("pinataMetadata", metadata);
+
+  // Upload to Pinata
+  const response = await axios.post<PinataResponse>(
+    `${PINATA_API_URL}/pinning/pinFileToIPFS`,
+    formData,
+    {
+      headers: {
+        ...formData.getHeaders(),
+        pinata_api_key: process.env.PINATA_API_KEY!,
+        pinata_secret_api_key: process.env.PINATA_SECRET!,
+      },
+    }
+  );
+
+  const ipfsHash = response.data.IpfsHash;
+  console.log(`✅ Image uploaded: ipfs://${ipfsHash}\n`);
+  return ipfsHash;
+}
+
+/**
+ * Upload metadata to Pinata IPFS
+ */
+async function uploadMetadata(imageHash: string): Promise<string> {
+  console.log("📤 Uploading metadata to IPFS...");
+
+  // Generate metadata JSON
+  const metadata = {
+    name: "First Squeezer",
+    description: "Early supporter of JuiceSwap - First Squeezer Campaign NFT",
+    image: `ipfs://${imageHash}`,
+  };
+
+  // Upload to Pinata
+  const response = await axios.post<PinataResponse>(
+    `${PINATA_API_URL}/pinning/pinJSONToIPFS`,
+    metadata,
+    {
+      headers: {
+        "Content-Type": "application/json",
+        pinata_api_key: process.env.PINATA_API_KEY!,
+        pinata_secret_api_key: process.env.PINATA_SECRET!,
+      },
+    }
+  );
+
+  const ipfsHash = response.data.IpfsHash;
+  console.log(`✅ Metadata uploaded: ipfs://${ipfsHash}\n`);
+  return ipfsHash;
+}
+
+/**
+ * Deploy FirstSqueezerNFT contract
+ */
+async function deployContract(metadataURI: string): Promise<string> {
+  console.log("🚀 Deploying contract to Citrea Testnet...");
+
+  const signerAddress = process.env.CAMPAIGN_SIGNER_ADDRESS!;
+
+  // Get deployer account
+  const [deployer] = await ethers.getSigners();
+  const balance = await ethers.provider.getBalance(deployer.address);
+
+  console.log("   Deployer:", deployer.address);
+  console.log("   Balance:", ethers.formatEther(balance), "cBTC");
+  console.log("   Signer:", signerAddress);
+  console.log("   Metadata:", metadataURI);
+  console.log("   Deadline: October 31, 2025 23:59:59 UTC\n");
+
+  // Deploy contract
+  const FirstSqueezerNFT = await ethers.getContractFactory("FirstSqueezerNFT");
+  const nft = await FirstSqueezerNFT.deploy(signerAddress, metadataURI);
+
+  await nft.waitForDeployment();
+
+  const contractAddress = await nft.getAddress();
+  console.log(`✅ Contract deployed: ${contractAddress}\n`);
+
+  return contractAddress;
+}
+
+/**
+ * Main execution
+ */
+async function main() {
+  console.log("🍋 Creating First Squeezer NFT Contract\n");
+
+  // Parse CLI arguments
+  const imagePath = process.argv[2];
+  if (!imagePath) {
+    console.error("❌ Error: No image path provided\n");
+    console.error("Usage:");
+    console.error('  npm run create-nft -- "/path/to/image.jpeg"\n');
+    process.exit(1);
+  }
+
+  try {
+    // Validate environment
+    validateEnvironment();
+
+    // Upload image to IPFS
+    const imageHash = await uploadImage(imagePath);
+
+    // Upload metadata to IPFS
+    const metadataHash = await uploadMetadata(imageHash);
+    const metadataURI = `ipfs://${metadataHash}`;
+
+    // Deploy contract
+    const contractAddress = await deployContract(metadataURI);
+
+    // Output summary
+    console.log("=".repeat(70));
+    console.log("🎉 NFT Contract Created Successfully!\n");
+    console.log("Image URI:     ", `ipfs://${imageHash}`);
+    console.log("Metadata URI:  ", metadataURI);
+    console.log("Contract:      ", contractAddress);
+    console.log("Network:       ", "Citrea Testnet (Chain ID: 5115)");
+    console.log("=".repeat(70));
+    console.log("\n📝 Next steps:");
+    console.log("  1. Add to API .env:");
+    console.log(`     FIRST_SQUEEZER_NFT_CONTRACT=${contractAddress}`);
+    console.log("  2. Implement signature endpoint in API");
+    console.log("  3. Update frontend with contract address");
+    console.log("\n🎉 Deployment complete!");
+  } catch (error: any) {
+    if (axios.isAxiosError(error)) {
+      console.error("\n❌ Upload failed:", error.response?.data || error.message);
+    } else {
+      console.error("\n❌ Deployment failed:", error.message);
+    }
+    process.exit(1);
+  }
+}
+
+main();
