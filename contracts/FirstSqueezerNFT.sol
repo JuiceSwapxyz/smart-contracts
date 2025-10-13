@@ -74,7 +74,7 @@ contract FirstSqueezerNFT is ERC721 {
         if (hasClaimed[msg.sender]) revert AlreadyClaimed();
 
         // Verify signature from backend API
-        bytes32 messageHash = keccak256(abi.encodePacked(msg.sender));
+        bytes32 messageHash = keccak256(abi.encodePacked(address(this), block.chainid, msg.sender));
         bytes32 ethSignedHash = messageHash.toEthSignedMessageHash();
         address recovered = ethSignedHash.recover(signature);
 

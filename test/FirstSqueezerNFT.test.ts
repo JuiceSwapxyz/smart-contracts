@@ -15,10 +15,15 @@ describe("FirstSqueezerNFT", function () {
   const CAMPAIGN_END = 1761955199; // October 31, 2025 23:59:59 UTC
 
   async function generateSignature(
+    contractAddress: string,
     claimer: string,
     signerWallet: HardhatEthersSigner
   ): Promise<string> {
-    const messageHash = ethers.solidityPackedKeccak256(["address"], [claimer]);
+    const chainId = 5115; // Citrea Testnet
+    const messageHash = ethers.solidityPackedKeccak256(
+      ["address", "uint256", "address"],
+      [contractAddress, chainId, claimer]
+    );
     const signature = await signerWallet.signMessage(ethers.getBytes(messageHash));
     return signature;
   }
@@ -59,7 +64,7 @@ describe("FirstSqueezerNFT", function () {
 
   describe("Claim Functionality", function () {
     it("Should allow valid claim with correct signature", async function () {
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
 
       await expect(nft.connect(user1).claim(signature))
         .to.emit(nft, "NFTClaimed")
@@ -71,7 +76,7 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should mint token ID starting at 1", async function () {
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
       await nft.connect(user1).claim(signature);
 
       expect(await nft.ownerOf(1)).to.equal(user1.address);
@@ -79,8 +84,8 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should allow multiple users to claim", async function () {
-      const sig1 = await generateSignature(user1.address, signer);
-      const sig2 = await generateSignature(user2.address, signer);
+      const sig1 = await generateSignature(await nft.getAddress(), user1.address, signer);
+      const sig2 = await generateSignature(await nft.getAddress(), user2.address, signer);
 
       await nft.connect(user1).claim(sig1);
       await nft.connect(user2).claim(sig2);
@@ -91,7 +96,7 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should revert on double claim attempt", async function () {
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
 
       await nft.connect(user1).claim(signature);
 
@@ -100,14 +105,14 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should revert with invalid signature", async function () {
-      const wrongSignature = await generateSignature(user1.address, attacker);
+      const wrongSignature = await generateSignature(await nft.getAddress(), user1.address, attacker);
 
       await expect(nft.connect(user1).claim(wrongSignature))
         .to.be.revertedWithCustomError(nft, "InvalidSignature");
     });
 
     it("Should revert when signature is for different address", async function () {
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
 
       await expect(nft.connect(user2).claim(signature))
         .to.be.revertedWithCustomError(nft, "InvalidSignature");
@@ -124,8 +129,8 @@ describe("FirstSqueezerNFT", function () {
   describe("Token URI (Static Metadata)", function () {
     beforeEach(async function () {
       // Mint some tokens
-      const sig1 = await generateSignature(user1.address, signer);
-      const sig2 = await generateSignature(user2.address, signer);
+      const sig1 = await generateSignature(await nft.getAddress(), user1.address, signer);
+      const sig2 = await generateSignature(await nft.getAddress(), user2.address, signer);
       await nft.connect(user1).claim(sig1);
       await nft.connect(user2).claim(sig2);
     });
@@ -165,17 +170,17 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should increment with each claim", async function () {
-      const sig1 = await generateSignature(user1.address, signer);
+      const sig1 = await generateSignature(await nft.getAddress(), user1.address, signer);
       await nft.connect(user1).claim(sig1);
       expect(await nft.totalSupply()).to.equal(1);
 
-      const sig2 = await generateSignature(user2.address, signer);
+      const sig2 = await generateSignature(await nft.getAddress(), user2.address, signer);
       await nft.connect(user2).claim(sig2);
       expect(await nft.totalSupply()).to.equal(2);
     });
 
     it("Should not increment on failed claims", async function () {
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
       await nft.connect(user1).claim(signature);
       expect(await nft.totalSupply()).to.equal(1);
 
@@ -195,7 +200,7 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should be true after successful claim", async function () {
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
       await nft.connect(user1).claim(signature);
 
       expect(await nft.hasClaimed(user1.address)).to.be.true;
@@ -203,7 +208,7 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should remain false for other users", async function () {
-      const sig1 = await generateSignature(user1.address, signer);
+      const sig1 = await generateSignature(await nft.getAddress(), user1.address, signer);
       await nft.connect(user1).claim(sig1);
 
       expect(await nft.hasClaimed(user1.address)).to.be.true;
@@ -214,7 +219,7 @@ describe("FirstSqueezerNFT", function () {
 
   describe("Event Emission", function () {
     it("Should emit NFTClaimed event with correct parameters", async function () {
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
 
       await expect(nft.connect(user1).claim(signature))
         .to.emit(nft, "NFTClaimed")
@@ -222,8 +227,8 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should emit events with incrementing token IDs", async function () {
-      const sig1 = await generateSignature(user1.address, signer);
-      const sig2 = await generateSignature(user2.address, signer);
+      const sig1 = await generateSignature(await nft.getAddress(), user1.address, signer);
+      const sig2 = await generateSignature(await nft.getAddress(), user2.address, signer);
 
       await expect(nft.connect(user1).claim(sig1))
         .to.emit(nft, "NFTClaimed")
@@ -237,7 +242,7 @@ describe("FirstSqueezerNFT", function () {
 
   describe("ERC721 Compliance", function () {
     beforeEach(async function () {
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
       await nft.connect(user1).claim(signature);
     });
 
@@ -260,7 +265,7 @@ describe("FirstSqueezerNFT", function () {
 
   describe("Security Tests", function () {
     it("Should prevent signature replay after transfer", async function () {
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
       await nft.connect(user1).claim(signature);
 
       await nft.connect(user1).transferFrom(user1.address, user2.address, 1);
@@ -282,7 +287,7 @@ describe("FirstSqueezerNFT", function () {
     it("Should allow claims before deadline", async function () {
       await time.increaseTo(CAMPAIGN_END - 1000);
 
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
       await expect(nft.connect(user1).claim(signature))
         .to.emit(nft, "NFTClaimed");
     });
@@ -290,7 +295,7 @@ describe("FirstSqueezerNFT", function () {
     it("Should allow claims at exact deadline", async function () {
       await time.setNextBlockTimestamp(CAMPAIGN_END);
 
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
       await expect(nft.connect(user1).claim(signature))
         .to.emit(nft, "NFTClaimed");
     });
@@ -298,7 +303,7 @@ describe("FirstSqueezerNFT", function () {
     it("Should revert claims after deadline", async function () {
       await time.setNextBlockTimestamp(CAMPAIGN_END + 10);
 
-      const signature = await generateSignature(user1.address, signer);
+      const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
       await expect(nft.connect(user1).claim(signature))
         .to.be.revertedWithCustomError(nft, "CampaignEnded");
     });
