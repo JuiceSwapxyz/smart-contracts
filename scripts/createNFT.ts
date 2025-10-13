@@ -1,4 +1,5 @@
-import { ethers } from "hardhat";
+import { ethers, network } from "hardhat";
+import hre from "hardhat";
 import axios from "axios";
 import FormData from "form-data";
 import fs from "fs";
@@ -12,15 +13,16 @@ import "dotenv/config";
  * 1. Upload image to Pinata IPFS
  * 2. Generate metadata JSON
  * 3. Upload metadata to Pinata IPFS
- * 4. Deploy contract to Citrea Testnet
+ * 4. Deploy contract to specified network
+ * 5. Verify contract on block explorer (production only)
  *
  * Usage:
- *   npm run create-nft -- "/path/to/image.jpeg"
+ *   hardhat create-nft --image "/path/to/image.jpeg"
+ *   hardhat create-nft --network citreaTestnet --image "/path/to/image.jpeg"
  *
  * Requirements:
- *   - PINATA_API_KEY in .env
- *   - PINATA_SECRET in .env
- *   - DEPLOYER_PRIVATE_KEY in .env (wallet with cBTC)
+ *   - PINATA_JWT in .env (V3 JWT token from Pinata dashboard)
+ *   - DEPLOYER_PRIVATE_KEY in .env (wallet with cBTC for production)
  *   - CAMPAIGN_SIGNER_ADDRESS in .env
  */
 
@@ -37,8 +39,7 @@ interface PinataResponse {
  */
 function validateEnvironment(): void {
   const required = [
-    "PINATA_API_KEY",
-    "PINATA_SECRET",
+    "PINATA_JWT",
     "DEPLOYER_PRIVATE_KEY",
     "CAMPAIGN_SIGNER_ADDRESS",
   ];
@@ -86,8 +87,7 @@ async function uploadImage(imagePath: string): Promise<string> {
     {
       headers: {
         ...formData.getHeaders(),
-        pinata_api_key: process.env.PINATA_API_KEY!,
-        pinata_secret_api_key: process.env.PINATA_SECRET!,
+        Authorization: `Bearer ${process.env.PINATA_JWT}`,
       },
     }
   );
@@ -117,8 +117,7 @@ async function uploadMetadata(imageHash: string): Promise<string> {
     {
       headers: {
         "Content-Type": "application/json",
-        pinata_api_key: process.env.PINATA_API_KEY!,
-        pinata_secret_api_key: process.env.PINATA_SECRET!,
+        Authorization: `Bearer ${process.env.PINATA_JWT}`,
       },
     }
   );
@@ -132,7 +131,7 @@ async function uploadMetadata(imageHash: string): Promise<string> {
  * Deploy FirstSqueezerNFT contract
  */
 async function deployContract(metadataURI: string): Promise<string> {
-  console.log("🚀 Deploying contract to Citrea Testnet...");
+  console.log("🚀 Deploying contract...");
 
   const signerAddress = process.env.CAMPAIGN_SIGNER_ADDRESS!;
 
@@ -140,6 +139,8 @@ async function deployContract(metadataURI: string): Promise<string> {
   const [deployer] = await ethers.getSigners();
   const balance = await ethers.provider.getBalance(deployer.address);
 
+  // Network detection
+  console.log(`   Network: ${network.name} (Chain ID: ${network.config.chainId})`);
   console.log("   Deployer:", deployer.address);
   console.log("   Balance:", ethers.formatEther(balance), "cBTC");
   console.log("   Signer:", signerAddress);
@@ -159,18 +160,44 @@ async function deployContract(metadataURI: string): Promise<string> {
 }
 
 /**
+ * Verify contract on block explorer
+ */
+async function verifyContract(
+  contractAddress: string,
+  signerAddress: string,
+  metadataURI: string
+): Promise<void> {
+  // Skip verification on local networks
+  if (network.name === "hardhat" || network.name === "localhost") {
+    return;
+  }
+
+  console.log("🔍 Verifying contract on block explorer...");
+
+  try {
+    await hre.run("verify:verify", {
+      address: contractAddress,
+      constructorArguments: [signerAddress, metadataURI],
+    });
+    console.log("✅ Contract verified!\n");
+  } catch (error: any) {
+    if (error.message.includes("Already Verified")) {
+      console.log("✅ Contract already verified!\n");
+    } else {
+      console.log("⚠️  Verification failed:", error.message);
+      console.log("   You can verify manually later.\n");
+    }
+  }
+}
+
+/**
  * Main execution
  */
-async function main() {
+export async function main(imagePath: string) {
   console.log("🍋 Creating First Squeezer NFT Contract\n");
 
-  // Parse CLI arguments
-  const imagePath = process.argv[2];
   if (!imagePath) {
-    console.error("❌ Error: No image path provided\n");
-    console.error("Usage:");
-    console.error('  npm run create-nft -- "/path/to/image.jpeg"\n');
-    process.exit(1);
+    throw new Error("No image path provided");
   }
 
   try {
@@ -187,13 +214,16 @@ async function main() {
     // Deploy contract
     const contractAddress = await deployContract(metadataURI);
 
+    // Verify contract
+    await verifyContract(contractAddress, process.env.CAMPAIGN_SIGNER_ADDRESS!, metadataURI);
+
     // Output summary
     console.log("=".repeat(70));
     console.log("🎉 NFT Contract Created Successfully!\n");
     console.log("Image URI:     ", `ipfs://${imageHash}`);
     console.log("Metadata URI:  ", metadataURI);
     console.log("Contract:      ", contractAddress);
-    console.log("Network:       ", "Citrea Testnet (Chain ID: 5115)");
+    console.log("Network:       ", network.name);
     console.log("=".repeat(70));
     console.log("\n📝 Next steps:");
     console.log("  1. Add to API .env:");
@@ -207,8 +237,6 @@ async function main() {
     } else {
       console.error("\n❌ Deployment failed:", error.message);
     }
-    process.exit(1);
+    throw error;
   }
 }
-
-main();

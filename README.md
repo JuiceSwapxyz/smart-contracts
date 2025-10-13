@@ -43,18 +43,22 @@ Campaign NFT contract for early JuiceSwap supporters.
 One command from image to deployed contract:
 
 ```bash
-npm run create-nft -- "/path/to/your/image.jpeg"
+# Local testing (Hardhat network)
+hardhat create-nft --image "/path/to/your/image.jpeg"
+
+# Production deployment (Citrea Testnet)
+hardhat create-nft --network citreaTestnet --image "/path/to/your/image.jpeg"
 ```
 
 This will:
 1. Upload image to IPFS (Pinata)
 2. Generate + upload metadata to IPFS
-3. Deploy contract to Citrea Testnet
-4. Output contract address for your API
+3. Deploy contract to specified network
+4. Verify contract on block explorer (production only)
+5. Output contract address for your API
 
 **Environment Variables:**
-- `PINATA_API_KEY` - Get at [pinata.cloud](https://app.pinata.cloud/developers/api-keys)
-- `PINATA_SECRET` - Pinata API secret
+- `PINATA_JWT` - JWT token from [pinata.cloud](https://app.pinata.cloud/developers/api-keys) (enable pinFileToIPFS and pinJSONToIPFS permissions)
 - `DEPLOYER_PRIVATE_KEY` - Wallet private key (must have cBTC for gas)
 - `CAMPAIGN_SIGNER_ADDRESS` - Backend API signer address (public address, not private key)
 

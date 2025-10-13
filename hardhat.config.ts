@@ -1,6 +1,14 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import "dotenv/config";
+import { task } from "hardhat/config";
+
+task("create-nft", "Deploy First Squeezer NFT from image to contract")
+  .addParam("image", "Path to NFT image file")
+  .setAction(async (taskArgs) => {
+    const { main } = await import("./scripts/createNFT");
+    await main(taskArgs.image);
+  });
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -11,6 +19,21 @@ const config: HardhatUserConfig = {
         runs: 200,
       },
     },
+  },
+  etherscan: {
+    apiKey: {
+      citreaTestnet: "no-api-key-needed",
+    },
+    customChains: [
+      {
+        network: "citreaTestnet",
+        chainId: 5115,
+        urls: {
+          apiURL: "https://explorer.testnet.citrea.xyz/api",
+          browserURL: "https://explorer.testnet.citrea.xyz",
+        },
+      },
+    ],
   },
   networks: {
     hardhat: {

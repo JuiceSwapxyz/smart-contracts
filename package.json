@@ -4,7 +4,6 @@
   "description": "JuiceSwap Smart Contracts",
   "scripts": {
     "compile": "hardhat compile",
-    "create-nft": "ts-node scripts/createNFT.ts",
     "test": "hardhat test"
   },
   "dependencies": {
