@@ -47,6 +47,26 @@ Add contract address to API `.env`:
 FIRST_SQUEEZER_NFT_CONTRACT=0x...  # Copy from deployment output
 ```
 
+## Testing
+
+Run the comprehensive test suite (34 tests):
+
+```bash
+# Test on clean Hardhat network
+npm test
+
+# Test on local Citrea Testnet fork
+FORK_CITREA=true npm test
+```
+
+All tests verify:
+- Deployment & initialization
+- Signature-based claiming
+- Security (reentrancy, replay attacks)
+- Campaign deadline enforcement
+- Static metadata (tokenURI)
+- ERC-721 compliance
+
 ## Contract Details
 
 - **Name**: First Squeezer

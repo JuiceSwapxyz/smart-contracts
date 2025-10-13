@@ -13,6 +13,18 @@ const config: HardhatUserConfig = {
     },
   },
   networks: {
+    hardhat: {
+      forking: process.env.FORK_CITREA === "true" ? {
+        url: process.env.CITREA_RPC_URL || "https://rpc.testnet.citrea.xyz",
+        enabled: true,
+      } : undefined,
+      chainId: 5115,
+      initialBaseFeePerGas: 0,
+      mining: {
+        auto: true,
+        interval: 0,
+      },
+    },
     citreaTestnet: {
       url: process.env.CITREA_RPC_URL || "https://rpc.testnet.citrea.xyz",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],

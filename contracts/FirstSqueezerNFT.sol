@@ -22,7 +22,7 @@ contract FirstSqueezerNFT is ERC721 {
     using MessageHashUtils for bytes32;
 
     /// @notice Campaign end timestamp (October 31, 2025 23:59:59 UTC)
-    uint256 public constant CAMPAIGN_END = 1730419199;
+    uint256 public constant CAMPAIGN_END = 1761955199;
 
     /// @notice Backend API signer address (verifies campaign completion)
     address public immutable signer;
