@@ -12,7 +12,7 @@ import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
  *
  * Features:
  * - One mint per address (enforced by hasClaimed mapping)
- * - Campaign ends October 31, 2025 (hardcoded deadline)
+ * - Campaign runs from October 30, 2025 12:00:00 UTC to October 31, 2025 23:59:59 UTC
  * - Mints directly to user upon successful claim
  * - Signature verification by trusted backend signer
  * - Static metadata URI for all tokens (IPFS)
@@ -20,6 +20,9 @@ import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 contract FirstSqueezerNFT is ERC721 {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
+
+    /// @notice Campaign start timestamp (October 30, 2025 12:00:00 UTC)
+    uint256 public constant CAMPAIGN_START = 1761825600;
 
     /// @notice Campaign end timestamp (October 31, 2025 23:59:59 UTC)
     uint256 public constant CAMPAIGN_END = 1761955199;
@@ -38,6 +41,9 @@ contract FirstSqueezerNFT is ERC721 {
 
     /// @notice Emitted when an NFT is successfully claimed
     event NFTClaimed(address indexed claimer, uint256 indexed tokenId);
+
+    /// @notice Campaign has not started yet
+    error CampaignNotStarted();
 
     /// @notice Campaign has ended
     error CampaignEnded();
@@ -67,6 +73,9 @@ contract FirstSqueezerNFT is ERC721 {
      * @param signature Backend signature proving user completed Twitter + Discord verification
      */
     function claim(bytes memory signature) external {
+        // Check campaign has started
+        if (block.timestamp < CAMPAIGN_START) revert CampaignNotStarted();
+
         // Check campaign deadline
         if (block.timestamp > CAMPAIGN_END) revert CampaignEnded();
 
