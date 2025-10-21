@@ -58,7 +58,7 @@ function validateEnvironment(): void {
  * Upload image to Pinata IPFS
  */
 async function uploadImage(imagePath: string): Promise<string> {
-  console.log("📤 Uploading image to IPFS...");
+  console.log("Uploading image to IPFS...");
 
   // Validate file exists
   if (!fs.existsSync(imagePath)) {
@@ -93,7 +93,7 @@ async function uploadImage(imagePath: string): Promise<string> {
   );
 
   const ipfsHash = response.data.IpfsHash;
-  console.log(`✅ Image uploaded: ipfs://${ipfsHash}\n`);
+  console.log(`Image uploaded: ipfs://${ipfsHash}\n`);
   return ipfsHash;
 }
 
@@ -101,7 +101,7 @@ async function uploadImage(imagePath: string): Promise<string> {
  * Upload metadata to Pinata IPFS
  */
 async function uploadMetadata(imageHash: string): Promise<string> {
-  console.log("📤 Uploading metadata to IPFS...");
+  console.log("Uploading metadata to IPFS...");
 
   // Generate metadata JSON
   const metadata = {
@@ -123,7 +123,7 @@ async function uploadMetadata(imageHash: string): Promise<string> {
   );
 
   const ipfsHash = response.data.IpfsHash;
-  console.log(`✅ Metadata uploaded: ipfs://${ipfsHash}\n`);
+  console.log(`Metadata uploaded: ipfs://${ipfsHash}\n`);
   return ipfsHash;
 }
 
@@ -131,7 +131,7 @@ async function uploadMetadata(imageHash: string): Promise<string> {
  * Deploy FirstSqueezerNFT contract
  */
 async function deployContract(metadataURI: string): Promise<string> {
-  console.log("🚀 Deploying contract...");
+  console.log("Deploying contract...");
 
   const signerAddress = process.env.CAMPAIGN_SIGNER_ADDRESS!;
 
@@ -145,7 +145,6 @@ async function deployContract(metadataURI: string): Promise<string> {
   console.log("   Balance:", ethers.formatEther(balance), "cBTC");
   console.log("   Signer:", signerAddress);
   console.log("   Metadata:", metadataURI);
-  console.log("   Deadline: October 31, 2025 23:59:59 UTC\n");
 
   // Deploy contract
   const FirstSqueezerNFT = await ethers.getContractFactory("FirstSqueezerNFT");
@@ -154,7 +153,7 @@ async function deployContract(metadataURI: string): Promise<string> {
   await nft.waitForDeployment();
 
   const contractAddress = await nft.getAddress();
-  console.log(`✅ Contract deployed: ${contractAddress}\n`);
+  console.log(`Contract deployed: ${contractAddress}\n`);
 
   return contractAddress;
 }
@@ -172,19 +171,19 @@ async function verifyContract(
     return;
   }
 
-  console.log("🔍 Verifying contract on block explorer...");
+  console.log("Verifying contract on block explorer...");
 
   try {
     await hre.run("verify:verify", {
       address: contractAddress,
       constructorArguments: [signerAddress, metadataURI],
     });
-    console.log("✅ Contract verified!\n");
+    console.log("Contract verified!\n");
   } catch (error: any) {
     if (error.message.includes("Already Verified")) {
-      console.log("✅ Contract already verified!\n");
+      console.log("Contract already verified!\n");
     } else {
-      console.log("⚠️  Verification failed:", error.message);
+      console.log("Verification failed:", error.message);
       console.log("   You can verify manually later.\n");
     }
   }
@@ -194,7 +193,7 @@ async function verifyContract(
  * Main execution
  */
 export async function main(imagePath: string) {
-  console.log("🍋 Creating First Squeezer NFT Contract\n");
+  console.log("Creating First Squeezer NFT Contract\n");
 
   if (!imagePath) {
     throw new Error("No image path provided");
@@ -219,23 +218,23 @@ export async function main(imagePath: string) {
 
     // Output summary
     console.log("=".repeat(70));
-    console.log("🎉 NFT Contract Created Successfully!\n");
+    console.log("NFT Contract Created Successfully!\n");
     console.log("Image URI:     ", `ipfs://${imageHash}`);
     console.log("Metadata URI:  ", metadataURI);
     console.log("Contract:      ", contractAddress);
     console.log("Network:       ", network.name);
     console.log("=".repeat(70));
-    console.log("\n📝 Next steps:");
+    console.log("\nNext steps:");
     console.log("  1. Add to API .env:");
     console.log(`     FIRST_SQUEEZER_NFT_CONTRACT=${contractAddress}`);
     console.log("  2. Implement signature endpoint in API");
     console.log("  3. Update frontend with contract address");
-    console.log("\n🎉 Deployment complete!");
+    console.log("\nDeployment complete!");
   } catch (error: any) {
     if (axios.isAxiosError(error)) {
-      console.error("\n❌ Upload failed:", error.response?.data || error.message);
+      console.error("\nUpload failed:", error.response?.data || error.message);
     } else {
-      console.error("\n❌ Deployment failed:", error.message);
+      console.error("\nDeployment failed:", error.message);
     }
     throw error;
   }
