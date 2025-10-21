@@ -12,7 +12,7 @@ import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
  *
  * Features:
  * - One mint per address (enforced by hasClaimed mapping)
- * - Campaign runs from October 30, 2025 12:00:00 UTC to October 31, 2025 23:59:59 UTC
+ * - Campaign runs from October 22, 2025 13:30:00 UTC to October 26, 2025 23:59:59 UTC
  * - Mints directly to user upon successful claim
  * - Signature verification by trusted backend signer
  * - Static metadata URI for all tokens (IPFS)
@@ -21,11 +21,11 @@ contract FirstSqueezerNFT is ERC721 {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
-    /// @notice Campaign start timestamp (October 30, 2025 12:00:00 UTC)
-    uint256 public constant CAMPAIGN_START = 1761825600;
+    /// @notice Campaign start timestamp (October 22, 2025 13:30:00 UTC)
+    uint256 public constant CAMPAIGN_START = 1761132600;
 
-    /// @notice Campaign end timestamp (October 31, 2025 23:59:59 UTC)
-    uint256 public constant CAMPAIGN_END = 1761955199;
+    /// @notice Campaign end timestamp (October 26, 2025 23:59:59 UTC)
+    uint256 public constant CAMPAIGN_END = 1761519599;
 
     /// @notice Backend API signer address (verifies campaign completion)
     address public immutable signer;
