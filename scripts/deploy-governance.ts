@@ -53,12 +53,26 @@ async function main() {
   // Step 1: Deploy JuiceSwapGovernor
   console.log('📝 Step 1: Deploying JuiceSwapGovernor...')
 
+  // Get SwapRouter and Factory addresses from state.json
+  const swapRouter = state.swapRouter02
+  const factory = state.v3CoreFactoryAddress
+
+  console.log('📦 SwapRouter:', swapRouter)
+  console.log('📦 Factory:', factory)
+  console.log('')
+
   // Load contract artifacts
   const JuiceSwapGovernorFactory = await ethers.getContractFactory('JuiceSwapGovernor')
 
-  const governor = await JuiceSwapGovernorFactory.deploy(JUSD_ADDRESS, JUICE_ADDRESS, {
-    gasLimit: 3000000
-  })
+  const governor = await JuiceSwapGovernorFactory.deploy(
+    JUSD_ADDRESS,
+    JUICE_ADDRESS,
+    swapRouter,
+    factory,
+    {
+      gasLimit: 3000000
+    }
+  )
   await governor.waitForDeployment()
 
   const governorAddress = await governor.getAddress()
@@ -159,14 +173,22 @@ async function main() {
   console.log('   Proposal Fee: 1000 JUSD')
   console.log('   Application Period: 14 days minimum')
   console.log('   Veto Quorum: 2% of JUICE voting power')
+  console.log('   TWAP Period: 30 minutes')
+  console.log('   Max Slippage: 2%')
+  console.log('')
+  console.log('🤖 Fee Collection:')
+  console.log('   Fee Collector: Not set (use setFeeCollector proposal)')
+  console.log('   Swap Router:', swapRouter)
+  console.log('   Frontrunning Protection: TWAP Oracle')
   console.log('')
   console.log('🔗 Explorer:')
   console.log(`   https://explorer.citrea.xyz/address/${governorAddress}`)
   console.log('')
   console.log('📘 Next Steps:')
   console.log('   1. Verify Governor contract on explorer')
-  console.log('   2. Test proposal creation with propose()')
-  console.log('   3. Announce governance transition to community')
+  console.log('   2. Create proposal to set fee collector (keeper address)')
+  console.log('   3. Setup keeper bot with private RPC')
+  console.log('   4. Announce governance transition to community')
   console.log('')
 }
 

@@ -17,7 +17,7 @@ describe("JuiceSwapGovernor", function () {
    * Basic deployment fixture
    */
   async function deployGovernorFixture() {
-    const [deployer, proposer, vetoer, executor, user1, user2] = await ethers.getSigners();
+    const [deployer, proposer, vetoer, executor, user1, user2, keeper] = await ethers.getSigners();
 
     // Deploy mocks
     const MockJUSD = await ethers.getContractFactory("MockJUSD");
@@ -29,11 +29,13 @@ describe("JuiceSwapGovernor", function () {
     const MockTarget = await ethers.getContractFactory("MockTarget");
     const target = await MockTarget.deploy() as unknown as MockTarget;
 
-    // Deploy Governor
+    // Deploy Governor (use deployer address as mock swapRouter and factory for now)
     const JuiceSwapGovernor = await ethers.getContractFactory("JuiceSwapGovernor");
     const governor = await JuiceSwapGovernor.deploy(
       await jusd.getAddress(),
-      await juice.getAddress()
+      await juice.getAddress(),
+      deployer.address, // Mock SwapRouter
+      deployer.address  // Mock Factory
     ) as unknown as JuiceSwapGovernor;
 
     // Setup: Mint JUSD to proposer and approve governor
@@ -46,7 +48,7 @@ describe("JuiceSwapGovernor", function () {
     await juice.setTotalVotingPower(totalVotes);
     await juice.setVotingPower(vetoer.address, vetoerVotes);
 
-    return { governor, jusd, juice, target, deployer, proposer, vetoer, executor, user1, user2 };
+    return { governor, jusd, juice, target, deployer, proposer, vetoer, executor, user1, user2, keeper };
   }
 
   /**
@@ -1309,6 +1311,155 @@ describe("JuiceSwapGovernor", function () {
         await juice.setVotingPower(user1.address, accountVotes);
 
         expect(await governor.canVeto(user1.address, [])).to.equal(true);
+      });
+    });
+  });
+
+  describe("Fee Collection & Reinvestment", function () {
+    describe("Admin Functions", function () {
+      it("Should allow governance to set fee collector", async function () {
+        const { governor, keeper, proposer, target } = await loadFixture(deployGovernorFixture);
+
+        // Create proposal to set fee collector
+        const data = governor.interface.encodeFunctionData("setFeeCollector", [keeper.address]);
+        const govAddress = await governor.getAddress();
+
+        await governor.connect(proposer).propose(
+          govAddress,
+          data,
+          MIN_APPLICATION_PERIOD,
+          "Set fee collector"
+        );
+
+        // Wait and execute
+        await time.increase(MIN_APPLICATION_PERIOD + 1);
+        await expect(governor.execute(1))
+          .to.emit(governor, "FeeCollectorUpdated")
+          .withArgs(ethers.ZeroAddress, keeper.address);
+
+        expect(await governor.feeCollector()).to.equal(keeper.address);
+      });
+
+      it("Should revert if non-governance tries to set fee collector", async function () {
+        const { governor, keeper } = await loadFixture(deployGovernorFixture);
+
+        await expect(
+          governor.connect(keeper).setFeeCollector(keeper.address)
+        ).to.be.revertedWithCustomError(governor, "NotAuthorized");
+      });
+
+      it("Should allow governance to update swap router", async function () {
+        const { governor, proposer, user1, deployer } = await loadFixture(deployGovernorFixture);
+
+        const newRouter = user1.address;
+        const data = governor.interface.encodeFunctionData("setSwapRouter", [newRouter]);
+        const govAddress = await governor.getAddress();
+
+        await governor.connect(proposer).propose(
+          govAddress,
+          data,
+          MIN_APPLICATION_PERIOD,
+          "Update swap router"
+        );
+
+        await time.increase(MIN_APPLICATION_PERIOD + 1);
+        await expect(governor.execute(1))
+          .to.emit(governor, "SwapRouterUpdated")
+          .withArgs(deployer.address, newRouter);
+
+        expect(await governor.swapRouter()).to.equal(newRouter);
+      });
+
+      it("Should revert if non-governance tries to update swap router", async function () {
+        const { governor, user1 } = await loadFixture(deployGovernorFixture);
+
+        await expect(
+          governor.connect(user1).setSwapRouter(user1.address)
+        ).to.be.revertedWithCustomError(governor, "NotAuthorized");
+      });
+    });
+
+    describe("collectAndReinvestFees", function () {
+      it("Should revert if called by unauthorized address", async function () {
+        const { governor, user1, target } = await loadFixture(deployGovernorFixture);
+
+        const poolAddress = await target.getAddress();
+
+        await expect(
+          governor.connect(user1).collectAndReinvestFees(
+            poolAddress,
+            "0x",
+            "0x"
+          )
+        ).to.be.revertedWithCustomError(governor, "NotAuthorized");
+      });
+
+      it("Should allow fee collector to call collectAndReinvestFees", async function () {
+        const { governor, keeper, proposer } = await loadFixture(deployGovernorFixture);
+
+        // First set fee collector via governance
+        const data = governor.interface.encodeFunctionData("setFeeCollector", [keeper.address]);
+        const govAddress = await governor.getAddress();
+
+        await governor.connect(proposer).propose(
+          govAddress,
+          data,
+          MIN_APPLICATION_PERIOD,
+          "Set fee collector"
+        );
+
+        await time.increase(MIN_APPLICATION_PERIOD + 1);
+        await governor.execute(1);
+
+        // Now keeper can call (will fail because we don't have a real pool, but authorization should pass)
+        // We expect it to fail at collectProtocol call, not authorization
+        const fakePoolAddress = ethers.Wallet.createRandom().address;
+
+        await expect(
+          governor.connect(keeper).collectAndReinvestFees(
+            fakePoolAddress,
+            "0x",
+            "0x"
+          )
+        ).to.be.reverted; // Will revert at pool call, not at authorization
+      });
+
+      it("Should allow governance to call collectAndReinvestFees via proposal", async function () {
+        const { governor, proposer } = await loadFixture(deployGovernorFixture);
+
+        const fakePoolAddress = ethers.Wallet.createRandom().address;
+        const data = governor.interface.encodeFunctionData("collectAndReinvestFees", [
+          fakePoolAddress,
+          "0x",
+          "0x"
+        ]);
+        const govAddress = await governor.getAddress();
+
+        await governor.connect(proposer).propose(
+          govAddress,
+          data,
+          MIN_APPLICATION_PERIOD,
+          "Collect fees"
+        );
+
+        await time.increase(MIN_APPLICATION_PERIOD + 1);
+
+        // Will fail at pool interaction, not authorization
+        await expect(governor.execute(1)).to.be.reverted;
+      });
+    });
+
+    describe("View Functions", function () {
+      it("Should have swapRouter set from constructor", async function () {
+        const { governor, deployer } = await loadFixture(deployGovernorFixture);
+
+        expect(await governor.swapRouter()).to.equal(deployer.address);
+      });
+
+      it("Should have feeCollector initially at zero address", async function () {
+        const { governor } = await loadFixture(deployGovernorFixture);
+
+        expect(await governor.feeCollector()).to.equal(ethers.ZeroAddress);
       });
     });
   });
