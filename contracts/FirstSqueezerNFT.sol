@@ -21,11 +21,11 @@ contract FirstSqueezerNFT is ERC721 {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
-    /// @notice Campaign start timestamp (October 22, 2025 13:30:00 UTC)
-    uint256 public constant CAMPAIGN_START = 1761139800;
+    /// @notice Campaign start timestamp
+    uint256 public immutable CAMPAIGN_START;
 
-    /// @notice Campaign end timestamp (October 26, 2025 23:59:59 UTC)
-    uint256 public constant CAMPAIGN_END = 1761523199;
+    /// @notice Campaign end timestamp
+    uint256 public immutable CAMPAIGN_END;
 
     /// @notice Backend API signer address (verifies campaign completion)
     address public immutable signer;
@@ -58,13 +58,23 @@ contract FirstSqueezerNFT is ERC721 {
      * @notice Initialize the First Squeezer NFT contract
      * @param _signer Backend API signer address
      * @param baseTokenURI IPFS base URI for metadata
+     * @param _campaignStart Campaign start timestamp
+     * @param _campaignEnd Campaign end timestamp
      */
-    constructor(address _signer, string memory baseTokenURI)
-        ERC721("First Squeezer", "SQUEEZER")
-    {
+    constructor(
+        address _signer,
+        string memory baseTokenURI,
+        uint256 _campaignStart,
+        uint256 _campaignEnd
+    ) ERC721("First Squeezer", "SQUEEZER") {
         require(_signer != address(0), "Invalid signer address");
+        require(_campaignStart < _campaignEnd, "Invalid campaign period");
+        require(_campaignEnd > block.timestamp, "Campaign already ended");
+
         signer = _signer;
         _baseTokenURI = baseTokenURI;
+        CAMPAIGN_START = _campaignStart;
+        CAMPAIGN_END = _campaignEnd;
     }
 
     /**

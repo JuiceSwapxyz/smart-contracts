@@ -6,8 +6,6 @@ import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 
 describe("FirstSqueezerNFT", function () {
   const METADATA_URI = "ipfs://QmTest123456789";
-  const CAMPAIGN_START = 1761825600; // October 30, 2025 12:00:00 UTC
-  const CAMPAIGN_END = 1761955199; // October 31, 2025 23:59:59 UTC
 
   async function generateSignature(
     contractAddress: string,
@@ -26,16 +24,26 @@ describe("FirstSqueezerNFT", function () {
   async function deployNFTFixture() {
     const [, signer, user1, user2, attacker] = await ethers.getSigners();
 
+    // Use dynamic timestamps relative to current block time
+    const currentTime = await time.latest();
+    const CAMPAIGN_START = currentTime + 3600; // Start in 1 hour
+    const CAMPAIGN_END = currentTime + 7 * 24 * 3600; // End in 7 days
+
     const FirstSqueezerNFT = await ethers.getContractFactory("FirstSqueezerNFT");
-    const nft = (await FirstSqueezerNFT.deploy(signer.address, METADATA_URI)) as unknown as FirstSqueezerNFT;
+    const nft = (await FirstSqueezerNFT.deploy(
+      signer.address,
+      METADATA_URI,
+      CAMPAIGN_START,
+      CAMPAIGN_END
+    )) as unknown as FirstSqueezerNFT;
     await nft.waitForDeployment();
 
-    return { nft, signer, user1, user2, attacker };
+    return { nft, signer, user1, user2, attacker, CAMPAIGN_START, CAMPAIGN_END };
   }
 
   async function deployNFTDuringCampaignFixture() {
     const fixture = await deployNFTFixture();
-    await time.increaseTo(CAMPAIGN_START + 1000);
+    await time.increaseTo(fixture.CAMPAIGN_START + 1000);
     return fixture;
   }
 
@@ -52,12 +60,12 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should set the correct campaign start timestamp", async function () {
-      const { nft } = await loadFixture(deployNFTFixture);
+      const { nft, CAMPAIGN_START } = await loadFixture(deployNFTFixture);
       expect(await nft.CAMPAIGN_START()).to.equal(CAMPAIGN_START);
     });
 
     it("Should set the correct campaign end timestamp", async function () {
-      const { nft } = await loadFixture(deployNFTFixture);
+      const { nft, CAMPAIGN_END } = await loadFixture(deployNFTFixture);
       expect(await nft.CAMPAIGN_END()).to.equal(CAMPAIGN_END);
     });
 
@@ -68,8 +76,14 @@ describe("FirstSqueezerNFT", function () {
 
     it("Should revert on zero address signer", async function () {
       const FirstSqueezerNFT = await ethers.getContractFactory("FirstSqueezerNFT");
+      const currentTime = await time.latest();
       await expect(
-        FirstSqueezerNFT.deploy(ethers.ZeroAddress, METADATA_URI)
+        FirstSqueezerNFT.deploy(
+          ethers.ZeroAddress,
+          METADATA_URI,
+          currentTime + 3600,
+          currentTime + 7 * 24 * 3600
+        )
       ).to.be.revertedWith("Invalid signer address");
     });
   });
@@ -325,19 +339,19 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should maintain immutable campaign start", async function () {
-      const { nft } = await loadFixture(deployNFTDuringCampaignFixture);
+      const { nft, CAMPAIGN_START } = await loadFixture(deployNFTDuringCampaignFixture);
       expect(await nft.CAMPAIGN_START()).to.equal(CAMPAIGN_START);
     });
 
     it("Should maintain immutable campaign end", async function () {
-      const { nft } = await loadFixture(deployNFTDuringCampaignFixture);
+      const { nft, CAMPAIGN_END } = await loadFixture(deployNFTDuringCampaignFixture);
       expect(await nft.CAMPAIGN_END()).to.equal(CAMPAIGN_END);
     });
   });
 
   describe("Campaign Timeframe", function () {
     it("Should revert claims before campaign start", async function () {
-      const { nft, signer, user1 } = await loadFixture(deployNFTFixture);
+      const { nft, signer, user1, CAMPAIGN_START } = await loadFixture(deployNFTFixture);
       await time.increaseTo(CAMPAIGN_START - 10);
 
       const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
@@ -346,7 +360,7 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should allow claims at exact campaign start", async function () {
-      const { nft, signer, user1 } = await loadFixture(deployNFTFixture);
+      const { nft, signer, user1, CAMPAIGN_START } = await loadFixture(deployNFTFixture);
       await time.increaseTo(CAMPAIGN_START);
 
       const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
@@ -356,7 +370,7 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should allow claims during campaign window", async function () {
-      const { nft, signer, user1 } = await loadFixture(deployNFTFixture);
+      const { nft, signer, user1, CAMPAIGN_START, CAMPAIGN_END } = await loadFixture(deployNFTFixture);
       const midCampaign = CAMPAIGN_START + Math.floor((CAMPAIGN_END - CAMPAIGN_START) / 2);
       await time.increaseTo(midCampaign);
 
@@ -366,7 +380,7 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should allow claims before deadline", async function () {
-      const { nft, signer, user1 } = await loadFixture(deployNFTFixture);
+      const { nft, signer, user1, CAMPAIGN_END } = await loadFixture(deployNFTFixture);
       await time.increaseTo(CAMPAIGN_END - 1000);
 
       const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
@@ -375,7 +389,7 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should allow claims at exact deadline", async function () {
-      const { nft, signer, user1 } = await loadFixture(deployNFTFixture);
+      const { nft, signer, user1, CAMPAIGN_END } = await loadFixture(deployNFTFixture);
       // Use setNextBlockTimestamp to ensure exact timing
       await time.setNextBlockTimestamp(CAMPAIGN_END);
 
@@ -385,7 +399,7 @@ describe("FirstSqueezerNFT", function () {
     });
 
     it("Should revert claims after deadline", async function () {
-      const { nft, signer, user1 } = await loadFixture(deployNFTFixture);
+      const { nft, signer, user1, CAMPAIGN_END } = await loadFixture(deployNFTFixture);
       await time.increaseTo(CAMPAIGN_END + 10);
 
       const signature = await generateSignature(await nft.getAddress(), user1.address, signer);
