@@ -68,7 +68,7 @@ contract JuiceSwapGovernor is ReentrancyGuard {
     error PeriodTooShort();
     error ProposalNotReady();
     error ProposalAlreadyExecuted();
-    error ProposalVetoed();
+    error ProposalIsVetoed();
     error NotQualified();
     error ExecutionFailed();
     error ProposalNotFound();
@@ -77,7 +77,7 @@ contract JuiceSwapGovernor is ReentrancyGuard {
 
     constructor(address _jusd, address _juice) {
         JUSD = IERC20(_jusd);
-        JUICE = IERC20(_juice);
+        JUICE = IEquity(_juice);
     }
 
     // ============ Core Functions ============
@@ -129,7 +129,7 @@ contract JuiceSwapGovernor is ReentrancyGuard {
 
         if (proposal.id == 0) revert ProposalNotFound();
         if (proposal.executed) revert ProposalAlreadyExecuted();
-        if (proposal.vetoed) revert ProposalVetoed();
+        if (proposal.vetoed) revert ProposalIsVetoed();
         if (block.timestamp < proposal.executeAfter) revert ProposalNotReady();
 
         proposal.executed = true;
@@ -155,7 +155,7 @@ contract JuiceSwapGovernor is ReentrancyGuard {
 
         if (proposal.id == 0) revert ProposalNotFound();
         if (proposal.executed) revert ProposalAlreadyExecuted();
-        if (proposal.vetoed) revert ProposalVetoed();
+        if (proposal.vetoed) revert ProposalIsVetoed();
         if (block.timestamp >= proposal.executeAfter) revert ProposalNotReady();
 
         // Check if msg.sender has 2% voting power (including delegated votes)
@@ -176,6 +176,8 @@ contract JuiceSwapGovernor is ReentrancyGuard {
      */
     function canVeto(address account, address[] calldata helpers) public view returns (bool) {
         uint256 totalVotingPower = JUICE.totalVotes();
+        if (totalVotingPower == 0) return false; // Prevent division by zero edge case
+
         uint256 accountVotes = JUICE.votesDelegated(account, helpers);
 
         // Check if account has at least 2% of total votes (QUORUM = 200 basis points)
