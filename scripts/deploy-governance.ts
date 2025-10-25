@@ -1,4 +1,4 @@
-import { ethers } from 'ethers'
+import { ethers } from 'hardhat'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -13,23 +13,20 @@ const CITREA_CHAIN_ID = 62831
 // Addresses from deployment (from deploy-v3)
 const STATE_FILE = path.join(__dirname, '../../deploy-v3/state.json')
 
-// JUICE/JUSD addresses (replace with actual addresses)
-const JUSD_ADDRESS = process.env.JUSD_ADDRESS || '0x...' // Replace with actual JUSD address
-const JUICE_ADDRESS = process.env.JUICE_ADDRESS || '0x...' // Replace with actual JUICE (Equity) address
+// JUICE/JUSD addresses - must be set in environment
+const JUSD_ADDRESS = process.env.JUSD_ADDRESS
+const JUICE_ADDRESS = process.env.JUICE_ADDRESS
+
+if (!JUSD_ADDRESS || !JUICE_ADDRESS) {
+  throw new Error('JUSD_ADDRESS and JUICE_ADDRESS environment variables must be set')
+}
 
 async function main() {
   console.log('🏛️  Deploying JuiceSwap Governance')
   console.log('===================================\n')
 
-  // Load private key from environment
-  const PRIVATE_KEY = process.env.PRIVATE_KEY
-  if (!PRIVATE_KEY) {
-    throw new Error('PRIVATE_KEY environment variable not set')
-  }
-
-  // Connect to network
-  const provider = new ethers.providers.JsonRpcProvider(CITREA_RPC, CITREA_CHAIN_ID)
-  const deployer = new ethers.Wallet(PRIVATE_KEY, provider)
+  // Get signer from hardhat
+  const [deployer] = await ethers.getSigners()
 
   console.log('📍 Deployer:', deployer.address)
   console.log('⛓️  Network: Citrea Mainnet')
@@ -49,22 +46,24 @@ async function main() {
   console.log('')
 
   // Check balance
+  const provider = ethers.provider
   const balance = await provider.getBalance(deployer.address)
-  console.log('💰 Deployer Balance:', ethers.utils.formatEther(balance), 'cBTC\n')
+  console.log('💰 Deployer Balance:', ethers.formatEther(balance), 'cBTC\n')
 
   // Step 1: Deploy JuiceSwapGovernor
   console.log('📝 Step 1: Deploying JuiceSwapGovernor...')
 
   // Load contract artifacts
-  const JuiceSwapGovernorFactory = await ethers.getContractFactory('JuiceSwapGovernor', deployer)
+  const JuiceSwapGovernorFactory = await ethers.getContractFactory('JuiceSwapGovernor')
 
   const governor = await JuiceSwapGovernorFactory.deploy(JUSD_ADDRESS, JUICE_ADDRESS, {
     gasLimit: 3000000
   })
-  await governor.deployed()
+  await governor.waitForDeployment()
 
-  console.log('✅ JuiceSwapGovernor deployed at:', governor.address)
-  console.log('   Tx Hash:', governor.deployTransaction.hash)
+  const governorAddress = await governor.getAddress()
+  console.log('✅ JuiceSwapGovernor deployed at:', governorAddress)
+  console.log('   Tx Hash:', governor.deploymentTransaction()?.hash)
   console.log('')
 
   // Step 2: Transfer Factory Ownership to Governor
@@ -83,7 +82,7 @@ async function main() {
     console.log('⚠️  Warning: Deployer is not Factory owner!')
     console.log('   You need to run this script with the current owner\'s private key\n')
   } else {
-    const setOwnerTx = await factory.setOwner(governor.address, { gasLimit: 200000 })
+    const setOwnerTx = await factory.setOwner(governorAddress, { gasLimit: 200000 })
     await setOwnerTx.wait()
     console.log('✅ Factory ownership transferred to Governor')
     console.log('   Tx Hash:', setOwnerTx.hash)
@@ -106,7 +105,7 @@ async function main() {
     console.log('⚠️  Warning: Deployer is not ProxyAdmin owner!')
     console.log('   You need to run this script with the current owner\'s private key\n')
   } else {
-    const transferOwnershipTx = await proxyAdmin.transferOwnership(governor.address, { gasLimit: 200000 })
+    const transferOwnershipTx = await proxyAdmin.transferOwnership(governorAddress, { gasLimit: 200000 })
     await transferOwnershipTx.wait()
     console.log('✅ ProxyAdmin ownership transferred to Governor')
     console.log('   Tx Hash:', transferOwnershipTx.hash)
@@ -122,10 +121,10 @@ async function main() {
   console.log('🔍 Final Ownership:')
   console.log('   Factory Owner:', newFactoryOwner)
   console.log('   ProxyAdmin Owner:', newProxyOwner)
-  console.log('   Governor Address:', governor.address)
+  console.log('   Governor Address:', governorAddress)
   console.log('')
 
-  if (newFactoryOwner === governor.address && newProxyOwner === governor.address) {
+  if (newFactoryOwner === governorAddress && newProxyOwner === governorAddress) {
     console.log('✅ All ownership successfully transferred to Governor!')
   } else {
     console.log('⚠️  Warning: Ownership transfer incomplete!')
@@ -133,13 +132,13 @@ async function main() {
 
   // Save governance deployment info
   const governanceState = {
-    governorAddress: governor.address,
+    governorAddress: governorAddress,
     jusdAddress: JUSD_ADDRESS,
     juiceAddress: JUICE_ADDRESS,
     factoryAddress: state.v3CoreFactoryAddress,
     proxyAdminAddress: state.proxyAdminAddress,
     deployedAt: new Date().toISOString(),
-    deployTxHash: governor.deployTransaction.hash,
+    deployTxHash: governor.deploymentTransaction()?.hash,
     network: 'Citrea Mainnet',
     chainId: CITREA_CHAIN_ID
   }
@@ -152,7 +151,7 @@ async function main() {
   console.log('\n🎉 Governance Deployment Complete!')
   console.log('===================================\n')
   console.log('📊 Summary:')
-  console.log('   Governor:', governor.address)
+  console.log('   Governor:', governorAddress)
   console.log('   Factory:', state.v3CoreFactoryAddress)
   console.log('   ProxyAdmin:', state.proxyAdminAddress)
   console.log('')
@@ -162,7 +161,7 @@ async function main() {
   console.log('   Veto Quorum: 2% of JUICE voting power')
   console.log('')
   console.log('🔗 Explorer:')
-  console.log(`   https://explorer.citrea.xyz/address/${governor.address}`)
+  console.log(`   https://explorer.citrea.xyz/address/${governorAddress}`)
   console.log('')
   console.log('📘 Next Steps:')
   console.log('   1. Verify Governor contract on explorer')

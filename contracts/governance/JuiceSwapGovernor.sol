@@ -249,7 +249,7 @@ contract JuiceSwapGovernor is ReentrancyGuard {
      * @notice Encode a function call for proposal
      * @dev Helper for creating proposal data
      */
-    function encodeSetFeeProtocol(address pool, uint8 feeProtocol0, uint8 feeProtocol1)
+    function encodeSetFeeProtocol(address /* pool */, uint8 feeProtocol0, uint8 feeProtocol1)
         external
         pure
         returns (bytes memory)

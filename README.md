@@ -65,8 +65,6 @@ This will:
 3. JUICE holders with 2%+ voting power can veto
 4. If no veto, anyone can execute proposal
 
-**See:** `JUICESWAP_DAO_MIGRATION.md` for complete guide
-
 ---
 
 ### FirstSqueezerNFT
