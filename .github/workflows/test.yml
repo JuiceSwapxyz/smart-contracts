@@ -25,23 +25,21 @@ jobs:
 
       - name: Create .env file
         run: |
-          if [ -f .env.example ]; then
-            cp .env.example .env
-          else
-            touch .env
-          fi
+          echo "PRIVATE_KEY=0x0000000000000000000000000000000000000000000000000000000000000001" > .env
+          echo "JUSD_ADDRESS=0x0000000000000000000000000000000000000000" >> .env
+          echo "JUICE_ADDRESS=0x0000000000000000000000000000000000000000" >> .env
 
       - name: Compile contracts
-        run: npx hardhat compile
+        run: npx hardhat compile --network hardhat
 
       - name: Run unit tests
-        run: npx hardhat test test/JuiceSwapGovernor.test.ts
+        run: npx hardhat test test/JuiceSwapGovernor.test.ts --network hardhat
 
       - name: Run integration tests
-        run: npx hardhat test test/JuiceSwapGovernor.integration.test.ts
+        run: npx hardhat test test/JuiceSwapGovernor.integration.test.ts --network hardhat
 
       - name: Run all tests
-        run: CI=true npx hardhat test
+        run: CI=true npx hardhat test --network hardhat
 
       - name: Generate coverage report
         run: npx hardhat coverage || echo "Coverage report generation skipped"
@@ -64,9 +62,9 @@ jobs:
         run: npm ci
 
       - name: Check Solidity formatting
-        run: npx prettier --check 'contracts/**/*.sol' || echo "Prettier check skipped"
+        run: npx prettier --check 'contracts/**/*.sol'
         continue-on-error: true
 
       - name: Check TypeScript formatting
-        run: npx prettier --check 'test/**/*.ts' 'scripts/**/*.ts' || echo "Prettier check skipped"
+        run: npx prettier --check 'test/**/*.ts' 'scripts/**/*.ts'
         continue-on-error: true
