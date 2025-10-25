@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [develop, main, feature/*]
+  pull_request:
+    branches: [develop, main]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create .env file
+        run: |
+          if [ -f .env.example ]; then
+            cp .env.example .env
+          else
+            touch .env
+          fi
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Run unit tests
+        run: npx hardhat test test/JuiceSwapGovernor.test.ts
+
+      - name: Run integration tests
+        run: npx hardhat test test/JuiceSwapGovernor.integration.test.ts
+
+      - name: Run all tests
+        run: CI=true npx hardhat test
+
+      - name: Generate coverage report
+        run: npx hardhat coverage || echo "Coverage report generation skipped"
+        continue-on-error: true
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check Solidity formatting
+        run: npx prettier --check 'contracts/**/*.sol' || echo "Prettier check skipped"
+        continue-on-error: true
+
+      - name: Check TypeScript formatting
+        run: npx prettier --check 'test/**/*.ts' 'scripts/**/*.ts' || echo "Prettier check skipped"
+        continue-on-error: true

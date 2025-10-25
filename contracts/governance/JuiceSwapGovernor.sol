@@ -45,6 +45,14 @@ interface ISwapRouter {
 }
 
 /**
+ * @title IUniswapV3Factory
+ * @notice Minimal interface for Uniswap V3 Factory
+ */
+interface IUniswapV3Factory {
+    function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool);
+}
+
+/**
  * @title JuiceSwapGovernor
  * @notice Governance contract for JuiceSwap that integrates with JUICE/JUSD veto system.
  *
@@ -341,48 +349,49 @@ contract JuiceSwapGovernor is ReentrancyGuard {
         address tokenIn,
         bytes calldata path
     ) internal view returns (address pool) {
-        // Path format: [token0, uint24 fee, token1, uint24 fee, token2, ...]
-        // First pool = computeAddress(token0, token1, fee)
+        // Path format: [address(20), uint24(3), address(20), uint24(3), ...]
+        // Bytes 0-19: first token (tokenIn)
+        // Bytes 20-22: fee (uint24)
+        // Bytes 23-42: second token
 
-        // Extract token1 (bytes 20-40) and fee (bytes 40-43)
-        address token1;
+        require(path.length >= 43, "Path too short");
+
+        address tokenOut;
         uint24 fee;
 
         assembly {
-            // token1 is at offset 20 (after first address)
-            token1 := shr(96, calldataload(add(path.offset, 20)))
-            // fee is at offset 40 (after first address + second address)
-            fee := shr(232, calldataload(add(path.offset, 40)))
+            // Fee is at bytes 20-22 (3 bytes)
+            // Load 32 bytes starting at offset 20, then shift right to get uint24
+            let feeData := calldataload(add(path.offset, 20))
+            fee := shr(232, feeData) // shift right 232 bits to get rightmost 24 bits
+
+            // Second token is at bytes 23-42 (20 bytes)
+            // Load 32 bytes starting at offset 23, then shift right to get address
+            let tokenData := calldataload(add(path.offset, 23))
+            tokenOut := shr(96, tokenData) // shift right 96 bits to get rightmost 160 bits
         }
 
         // Compute pool address deterministically using immutable factory
-        pool = _computePoolAddress(FACTORY, tokenIn, token1, fee);
+        pool = _computePoolAddress(FACTORY, tokenIn, tokenOut, fee);
     }
 
     /**
-     * @notice Compute Uniswap V3 pool address deterministically
+     * @notice Get Uniswap V3 pool address from factory
      * @param factory The Uniswap V3 factory address
      * @param tokenA First token
      * @param tokenB Second token
      * @param fee Fee tier
-     * @return pool The computed pool address
+     * @return pool The pool address
      */
     function _computePoolAddress(
         address factory,
         address tokenA,
         address tokenB,
         uint24 fee
-    ) internal pure returns (address pool) {
-        // Ensure tokens are ordered
-        (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
-
-        // Uniswap V3 uses CREATE2 with specific salt
-        pool = address(uint160(uint256(keccak256(abi.encodePacked(
-            hex'ff',
-            factory,
-            keccak256(abi.encode(token0, token1, fee)),
-            hex'e34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54' // POOL_INIT_CODE_HASH
-        )))));
+    ) internal view returns (address pool) {
+        // Query factory for pool address
+        pool = IUniswapV3Factory(factory).getPool(tokenA, tokenB, fee);
+        require(pool != address(0), "Pool does not exist");
     }
 
     /**
