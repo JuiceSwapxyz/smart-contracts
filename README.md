@@ -21,6 +21,54 @@ npm test
 
 ## Contracts
 
+### JuiceSwapGovernor
+
+Decentralized governance contract for JuiceSwap protocol, integrating with JUICE/JUSD veto system.
+
+**Features:**
+- **Community-controlled**: JUICE token holders govern JuiceSwap
+- **Proposal fee**: 1000 JUSD to prevent spam
+- **Veto period**: 14 days for community review
+- **Quorum**: 2% voting power required to veto
+- **Holding-weighted votes**: Longer JUICE holders have more voting power
+
+**Details:**
+- **Contract**: `contracts/governance/JuiceSwapGovernor.sol`
+- **Network**: Citrea Mainnet (Chain ID: 62831)
+- **Controls**: Factory (`0x6832283eEA5a9A3C4384A5D9a06Db0ce6FE9C79E`), ProxyAdmin (`0x3F7a8cC3722fCad90040466EC2CfB618054f5e62`)
+
+**Integration:**
+- **JUSD**: JuiceDollar stablecoin (proposal fee payment)
+- **JUICE**: Equity token (voting power)
+
+#### Deploy Governance
+
+```bash
+# Configure environment
+export PRIVATE_KEY="..."        # Current Factory/ProxyAdmin owner
+export JUSD_ADDRESS="..."       # JuiceDollar contract
+export JUICE_ADDRESS="..."      # Equity contract
+
+# Deploy and transfer ownership
+npx ts-node scripts/deploy-governance.ts
+```
+
+This will:
+1. Deploy JuiceSwapGovernor contract
+2. Transfer Factory ownership to Governor
+3. Transfer ProxyAdmin ownership to Governor
+4. Save deployment info to `governance-deployment.json`
+
+**Governance Process:**
+1. Anyone pays 1000 JUSD to create proposal
+2. 14 day veto period begins
+3. JUICE holders with 2%+ voting power can veto
+4. If no veto, anyone can execute proposal
+
+**See:** `JUICESWAP_DAO_MIGRATION.md` for complete guide
+
+---
+
 ### FirstSqueezerNFT
 
 Campaign NFT contract for early JuiceSwap supporters.
