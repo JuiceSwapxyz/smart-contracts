@@ -64,7 +64,7 @@ contract MockJUICE is ERC20 {
      * @return          The total number of votes of sender at the current point in time
      */
     function votesDelegated(address sender, address[] calldata helpers) external view returns (uint256) {
-        uint256 totalVotes = _votingPower[sender];
+        uint256 senderVotes = _votingPower[sender];
 
         // Add votes from helpers (simulating delegation)
         for (uint256 i = 0; i < helpers.length; i++) {
@@ -77,10 +77,10 @@ contract MockJUICE is ERC20 {
                 require(helper > helpers[i-1], "Helpers must be sorted");
             }
 
-            totalVotes += _votingPower[helper];
+            senderVotes += _votingPower[helper];
         }
 
-        return totalVotes;
+        return senderVotes;
     }
 
     /**
@@ -88,5 +88,19 @@ contract MockJUICE is ERC20 {
      */
     function delegateVoteTo(address delegate) external {
         delegates[msg.sender] = delegate;
+    }
+
+    /**
+     * @notice Checks whether the sender address is qualified (has at least 2% voting power)
+     * @dev Matches Equity.sol implementation
+     */
+    function checkQualified(address sender, address[] calldata helpers) external view {
+        uint256 QUORUM = 200; // 2% in basis points
+        uint256 _votes = this.votesDelegated(sender, helpers);
+        uint256 _totalVotes = this.totalVotes();
+
+        if (_votes * 10_000 < QUORUM * _totalVotes) {
+            revert("NotQualified");
+        }
     }
 }

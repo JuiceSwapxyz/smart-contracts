@@ -53,24 +53,13 @@ async function main() {
   // Step 1: Deploy JuiceSwapGovernor
   console.log('📝 Step 1: Deploying JuiceSwapGovernor...')
 
-  // Get SwapRouter and Factory addresses from state.json
-  const swapRouter = state.swapRouter02
-  const factory = state.v3CoreFactoryAddress
-
-  console.log('📦 SwapRouter:', swapRouter)
-  console.log('📦 Factory:', factory)
-  console.log('')
-
-  // Load contract artifacts
   const JuiceSwapGovernorFactory = await ethers.getContractFactory('JuiceSwapGovernor')
 
   const governor = await JuiceSwapGovernorFactory.deploy(
     JUSD_ADDRESS,
     JUICE_ADDRESS,
-    swapRouter,
-    factory,
     {
-      gasLimit: 3000000
+      gasLimit: 2000000
     }
   )
   await governor.waitForDeployment()
@@ -80,6 +69,37 @@ async function main() {
   console.log('   Tx Hash:', governor.deploymentTransaction()?.hash)
   console.log('')
 
+  // Step 1b: Deploy JuiceSwapFeeCollector
+  console.log('📝 Step 1b: Deploying JuiceSwapFeeCollector...')
+
+  // Get SwapRouter and Factory addresses from state.json
+  const swapRouter = state.swapRouter02
+  const factory = state.v3CoreFactoryAddress
+
+  console.log('📦 SwapRouter:', swapRouter)
+  console.log('📦 Factory:', factory)
+  console.log('📦 Owner (Governor):', governorAddress)
+  console.log('')
+
+  const JuiceSwapFeeCollectorFactory = await ethers.getContractFactory('JuiceSwapFeeCollector')
+
+  const feeCollector = await JuiceSwapFeeCollectorFactory.deploy(
+    JUSD_ADDRESS,
+    JUICE_ADDRESS,
+    swapRouter,
+    factory,
+    governorAddress,  // Governor owns FeeCollector
+    {
+      gasLimit: 3000000
+    }
+  )
+  await feeCollector.waitForDeployment()
+
+  const feeCollectorAddress = await feeCollector.getAddress()
+  console.log('✅ JuiceSwapFeeCollector deployed at:', feeCollectorAddress)
+  console.log('   Tx Hash:', feeCollector.deploymentTransaction()?.hash)
+  console.log('')
+
   // Step 2: Transfer Factory Ownership to Governor
   console.log('📝 Step 2: Transferring Factory ownership to Governor...')
 
@@ -87,16 +107,16 @@ async function main() {
     'function owner() view returns (address)',
     'function setOwner(address _owner)'
   ]
-  const factory = new ethers.Contract(state.v3CoreFactoryAddress, factoryABI, deployer)
+  const factoryContract = new ethers.Contract(state.v3CoreFactoryAddress, factoryABI, deployer)
 
-  const currentFactoryOwner = await factory.owner()
+  const currentFactoryOwner = await factoryContract.owner()
   console.log('   Current Factory Owner:', currentFactoryOwner)
 
   if (currentFactoryOwner !== deployer.address) {
     console.log('⚠️  Warning: Deployer is not Factory owner!')
     console.log('   You need to run this script with the current owner\'s private key\n')
   } else {
-    const setOwnerTx = await factory.setOwner(governorAddress, { gasLimit: 200000 })
+    const setOwnerTx = await factoryContract.setOwner(governorAddress, { gasLimit: 200000 })
     await setOwnerTx.wait()
     console.log('✅ Factory ownership transferred to Governor')
     console.log('   Tx Hash:', setOwnerTx.hash)
@@ -129,13 +149,14 @@ async function main() {
   // Step 4: Verify ownership transfer
   console.log('📝 Step 4: Verifying ownership transfer...\n')
 
-  const newFactoryOwner = await factory.owner()
+  const newFactoryOwner = await factoryContract.owner()
   const newProxyOwner = await proxyAdmin.owner()
 
   console.log('🔍 Final Ownership:')
   console.log('   Factory Owner:', newFactoryOwner)
   console.log('   ProxyAdmin Owner:', newProxyOwner)
   console.log('   Governor Address:', governorAddress)
+  console.log('   FeeCollector Owner:', await feeCollector.owner())
   console.log('')
 
   if (newFactoryOwner === governorAddress && newProxyOwner === governorAddress) {
@@ -147,12 +168,15 @@ async function main() {
   // Save governance deployment info
   const governanceState = {
     governorAddress: governorAddress,
+    feeCollectorAddress: feeCollectorAddress,
     jusdAddress: JUSD_ADDRESS,
     juiceAddress: JUICE_ADDRESS,
     factoryAddress: state.v3CoreFactoryAddress,
     proxyAdminAddress: state.proxyAdminAddress,
+    swapRouterAddress: swapRouter,
     deployedAt: new Date().toISOString(),
-    deployTxHash: governor.deploymentTransaction()?.hash,
+    governorDeployTxHash: governor.deploymentTransaction()?.hash,
+    feeCollectorDeployTxHash: feeCollector.deploymentTransaction()?.hash,
     network: 'Citrea Mainnet',
     chainId: CITREA_CHAIN_ID
   }
@@ -166,27 +190,30 @@ async function main() {
   console.log('===================================\n')
   console.log('📊 Summary:')
   console.log('   Governor:', governorAddress)
+  console.log('   FeeCollector:', feeCollectorAddress)
   console.log('   Factory:', state.v3CoreFactoryAddress)
   console.log('   ProxyAdmin:', state.proxyAdminAddress)
   console.log('')
   console.log('⚙️  Governance Parameters:')
-  console.log('   Proposal Fee: 1000 JUSD')
+  console.log('   Proposal Fee: 1000 JUSD (goes to JUICE equity)')
   console.log('   Application Period: 14 days minimum')
   console.log('   Veto Quorum: 2% of JUICE voting power')
-  console.log('   TWAP Period: 30 minutes')
-  console.log('   Max Slippage: 2%')
   console.log('')
   console.log('🤖 Fee Collection:')
-  console.log('   Fee Collector: Not set (use setFeeCollector proposal)')
+  console.log('   Fee Collector Contract:', feeCollectorAddress)
+  console.log('   Keeper Address: Not set (use setFeeCollector proposal)')
   console.log('   Swap Router:', swapRouter)
+  console.log('   TWAP Period: 30 minutes')
+  console.log('   Max Slippage: 2%')
   console.log('   Frontrunning Protection: TWAP Oracle')
   console.log('')
   console.log('🔗 Explorer:')
-  console.log(`   https://explorer.citrea.xyz/address/${governorAddress}`)
+  console.log(`   Governor: https://explorer.citrea.xyz/address/${governorAddress}`)
+  console.log(`   FeeCollector: https://explorer.citrea.xyz/address/${feeCollectorAddress}`)
   console.log('')
   console.log('📘 Next Steps:')
-  console.log('   1. Verify Governor contract on explorer')
-  console.log('   2. Create proposal to set fee collector (keeper address)')
+  console.log('   1. Verify both contracts on explorer')
+  console.log('   2. Create proposal to set fee collector keeper address')
   console.log('   3. Setup keeper bot with private RPC')
   console.log('   4. Announce governance transition to community')
   console.log('')

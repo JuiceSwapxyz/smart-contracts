@@ -27,6 +27,14 @@ interface IEquity {
     function votesDelegated(address sender, address[] calldata helpers) external view returns (uint256);
 
     /**
+     * @notice Checks whether the sender address is qualified given a list of helpers that delegated their votes
+     * directly or indirectly to the sender. Reverts with NotQualified if the sender has less than 2% voting power.
+     * @param sender    The address whose qualification is being checked
+     * @param helpers   An incrementally sorted list of helpers without duplicates and without the sender.
+     */
+    function checkQualified(address sender, address[] calldata helpers) external view;
+
+    /**
      * @notice Delegation mapping
      */
     function delegates(address owner) external view returns (address);
