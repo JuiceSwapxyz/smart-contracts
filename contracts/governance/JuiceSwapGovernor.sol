@@ -2,6 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./IEquity.sol";
 
@@ -16,6 +17,7 @@ import "./IEquity.sol";
  * while maintaining the security of the JUICE ecosystem's proven veto mechanism.
  */
 contract JuiceSwapGovernor is ReentrancyGuard {
+    using SafeERC20 for IERC20;
 
     // ============ Constants ============
 
@@ -110,7 +112,7 @@ contract JuiceSwapGovernor is ReentrancyGuard {
         if (applicationPeriod < MIN_APPLICATION_PERIOD) revert PeriodTooShort();
 
         // Transfer fee from proposer directly to JUICE equity (increases JUICE price!)
-        JUSD.transferFrom(msg.sender, address(JUICE), PROPOSAL_FEE);
+        JUSD.safeTransferFrom(msg.sender, address(JUICE), PROPOSAL_FEE);
 
         proposalId = ++proposalCount;
         uint256 executeAfter = block.timestamp + applicationPeriod;
@@ -146,8 +148,23 @@ contract JuiceSwapGovernor is ReentrancyGuard {
 
         proposal.executed = true;
 
-        // Execute the proposal
-        (bool success, ) = proposal.target.call(proposal.data);
+        // Execute the proposal with return bomb DoS protection
+        // Uses assembly to prevent unbounded return data copying
+        address target = proposal.target;
+        bytes memory data = proposal.data;
+
+        bool success;
+        assembly {
+            success := call(
+                gas(),                    // Forward all gas (EIP-150 protects caller)
+                target,                   // Target contract address
+                0,                        // No ETH value
+                add(data, 0x20),          // Calldata pointer (skip length prefix)
+                mload(data),              // Calldata length
+                0,                        // Don't allocate return data buffer
+                0                         // Return data size = 0 (prevents DoS)
+            )
+        }
         if (!success) revert ExecutionFailed();
 
         emit ProposalExecuted(proposalId, msg.sender);
@@ -161,6 +178,21 @@ contract JuiceSwapGovernor is ReentrancyGuard {
      * @dev This integrates with JUICE voting power from the Equity contract.
      * The vetoer must have at least 2% of the total votes (holding-period-weighted).
      * You can include delegates who have delegated their votes to you.
+     *
+     * @dev Flash Loan Protection Analysis:
+     * The JUICE token uses time-weighted voting where votes = balance × holding duration.
+     * This provides complete protection against flash loan attacks:
+     *
+     * - Flash-loaned tokens have ZERO holding duration within the transaction
+     * - Vote anchors adjust on transfer to preserve existing votes without granting
+     *   instant voting power to newly transferred tokens
+     * - block.timestamp is constant within a transaction, so no time passes
+     * - Flash loans must be repaid in same transaction, giving attacker no time advantage
+     *
+     * Example: Attacker flash loans 10,000 JUICE (0 seconds held) = 0 new votes
+     *
+     * This mechanism is based on the audited Frankencoin design (ChainSecurity 2023).
+     * The 14-day application period and 2% quorum provide additional security layers.
      */
     function veto(uint256 proposalId, address[] calldata helpers) external {
         Proposal storage proposal = proposals[proposalId];
