@@ -32,6 +32,8 @@ interface ISwapRouter {
  */
 interface IUniswapV3Factory {
     function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool);
+    function setOwner(address _owner) external;
+    function enableFeeAmount(uint24 fee, int24 tickSpacing) external;
 }
 
 /**
@@ -71,6 +73,8 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     event SwapRouterUpdated(address indexed oldRouter, address indexed newRouter);
     event ProtectionParamsUpdated(uint32 twapPeriod, uint256 maxSlippageBps);
     event CollectorAuthorizationChanged(address indexed collector, bool authorized);
+    event FactoryOwnerUpdated(address indexed newOwner);
+    event FeeAmountEnabled(uint24 indexed fee, int24 indexed tickSpacing);
 
     // ============ Errors ============
 
@@ -333,5 +337,32 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
         authorizedCollectors[collector] = authorized;
 
         emit CollectorAuthorizationChanged(collector, authorized);
+    }
+
+    /**
+     * @notice Transfer factory ownership to a new address
+     * @param _owner The new factory owner address
+     * @dev Only callable by owner (JuiceSwapGovernor)
+     * @dev Use this to transfer factory control if needed (emergency or upgrade)
+     */
+    function setFactoryOwner(address _owner) external onlyOwner {
+        if (_owner == address(0)) revert InvalidAddress();
+
+        IUniswapV3Factory(FACTORY).setOwner(_owner);
+
+        emit FactoryOwnerUpdated(_owner);
+    }
+
+    /**
+     * @notice Enable a new fee tier on the factory
+     * @param fee The fee amount in hundredths of a bip (e.g., 500 = 0.05%)
+     * @param tickSpacing The tick spacing for the fee tier
+     * @dev Only callable by owner (JuiceSwapGovernor)
+     * @dev Fee tiers can never be removed once enabled
+     */
+    function enableFeeAmount(uint24 fee, int24 tickSpacing) external onlyOwner {
+        IUniswapV3Factory(FACTORY).enableFeeAmount(fee, tickSpacing);
+
+        emit FeeAmountEnabled(fee, tickSpacing);
     }
 }
