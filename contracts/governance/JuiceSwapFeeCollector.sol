@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./libraries/OracleLibrary.sol";
+import "./libraries/Path.sol";
 import "./interfaces/IUniswapV3Pool.sol";
 import "./IEquity.sol";
 
@@ -14,18 +15,15 @@ import "./IEquity.sol";
  * @notice Minimal interface for Uniswap V3 SwapRouter
  */
 interface ISwapRouter {
-    struct ExactInputSingleParams {
-        address tokenIn;
-        address tokenOut;
-        uint24 fee;
+    struct ExactInputParams {
+        bytes path;
         address recipient;
         uint256 deadline;
         uint256 amountIn;
         uint256 amountOutMinimum;
-        uint160 sqrtPriceLimitX96;
     }
 
-    function exactInputSingle(ExactInputSingleParams calldata params) external payable returns (uint256 amountOut);
+    function exactInput(ExactInputParams calldata params) external payable returns (uint256 amountOut);
 }
 
 /**
@@ -46,6 +44,7 @@ interface IUniswapV3Factory {
  */
 contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+    using Path for bytes;
 
     // ============ Immutables ============
 
@@ -59,6 +58,8 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     uint32 public twapPeriod; // TWAP observation period in seconds
     uint256 public maxSlippageBps; // Maximum allowed slippage in basis points (e.g., 200 = 2%)
 
+    mapping(address => bool) public authorizedCollectors; // Addresses authorized to collect fees
+
     // ============ Events ============
 
     event FeesReinvested(
@@ -69,12 +70,15 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     );
     event SwapRouterUpdated(address indexed oldRouter, address indexed newRouter);
     event ProtectionParamsUpdated(uint32 twapPeriod, uint256 maxSlippageBps);
+    event CollectorAuthorizationChanged(address indexed collector, bool authorized);
 
     // ============ Errors ============
 
     error InvalidAddress();
     error InvalidParams();
     error PoolDoesNotExist();
+    error Unauthorized();
+    error InvalidPath();
 
     // ============ Constructor ============
 
@@ -106,23 +110,25 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     /**
      * @notice Collect protocol fees from a pool, swap to JUSD, and deposit to Equity
      * @param pool The Uniswap V3 pool to collect fees from
-     * @param feeTier0 Fee tier for token0→JUSD pool (0 if token0 is JUSD)
-     * @param feeTier1 Fee tier for token1→JUSD pool (0 if token1 is JUSD)
+     * @param path0 Encoded swap path for token0→JUSD (empty bytes if token0 is JUSD)
+     * @param path1 Encoded swap path for token1→JUSD (empty bytes if token1 is JUSD)
      *
-     * @dev PERMISSIONLESS - Anyone can call to help increase JUICE price
-     * @dev Caller pays gas, JUICE holders benefit from increased equity
+     * @dev PERMISSIONED - Only authorized collectors can call
+     * @dev Authorized collectors are managed by JuiceSwapGovernor via veto system
      * @dev This contract must be the protocol fee collector (Factory owner) for the pool
      * @dev collectProtocol() only succeeds if this contract has permission to collect fees
      * @dev All collected JUSD is sent directly to JUICE equity - no funds can be redirected
      * @dev Uses TWAP oracle (configurable period) to prevent frontrunning attacks
-     * @dev Only supports single-hop swaps (token → JUSD directly)
-     * @dev Requires tokenIn/JUSD pools to exist at the specified fee tiers
+     * @dev Supports multi-hop swaps via encoded paths (e.g., WBTC→WETH→JUSD)
+     * @dev Path format: abi.encodePacked(tokenIn, fee, tokenMid, fee, JUSD)
+     * @dev TWAP validation protects against malicious routing even from compromised collectors
      */
     function collectAndReinvestFees(
         address pool,
-        uint24 feeTier0,
-        uint24 feeTier1
+        bytes calldata path0,
+        bytes calldata path1
     ) external nonReentrant returns (uint256 jusdReceived) {
+        if (!authorizedCollectors[msg.sender]) revert Unauthorized();
         IUniswapV3Pool v3Pool = IUniswapV3Pool(pool);
 
         address token0 = v3Pool.token0();
@@ -136,12 +142,14 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
             type(uint128).max
         );
 
-        if (amount0 > 0 && token0 != address(JUSD) && feeTier0 != 0) {
-            _swapSingleHopToJUSD(token0, amount0, feeTier0);
+        // Swap token0 to JUSD if needed (path0.length > 0 means swap is required)
+        if (amount0 > 0 && token0 != address(JUSD) && path0.length > 0) {
+            _swapToJUSD(path0, amount0, token0);
         }
 
-        if (amount1 > 0 && token1 != address(JUSD) && feeTier1 != 0) {
-            _swapSingleHopToJUSD(token1, amount1, feeTier1);
+        // Swap token1 to JUSD if needed (path1.length > 0 means swap is required)
+        if (amount1 > 0 && token1 != address(JUSD) && path1.length > 0) {
+            _swapToJUSD(path1, amount1, token1);
         }
 
         jusdReceived = JUSD.balanceOf(address(this)) - jusdBefore;
@@ -155,43 +163,111 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Internal function to swap tokens to JUSD via single-hop SwapRouter call
-     * @param tokenIn The input token
+     * @notice Internal function to swap tokens to JUSD via encoded path
+     * @param path Encoded swap path (single or multi-hop)
+     *             Single-hop: abi.encodePacked(tokenIn, fee, JUSD)
+     *             Multi-hop:  abi.encodePacked(tokenIn, fee, tokenMid, fee, ..., JUSD)
      * @param amountIn The amount to swap
-     * @param feeTier The fee tier for the tokenIn/JUSD pool
+     * @param expectedToken The token expected to be at the start of the path
+     * @dev Uses TWAP oracles across all hops for manipulation protection
+     * @dev Uniswap's exactInput() efficiently handles both single and multi-hop swaps
      */
-    function _swapSingleHopToJUSD(
-        address tokenIn,
-        uint256 amountIn,
-        uint24 feeTier
-    ) internal {
-        address pool = _computePoolAddress(FACTORY, tokenIn, address(JUSD), feeTier);
+    function _swapToJUSD(bytes memory path, uint256 amountIn, address expectedToken) internal {
+        // Validate path ends with JUSD
+        _validatePath(path);
 
-        (int24 twapTick, ) = OracleLibrary.consult(pool, twapPeriod);
+        // Get first token from path
+        (address tokenIn, , ) = path.decodeFirstPool();
 
-        uint256 expectedOutput = OracleLibrary.getQuoteAtTick(
-            twapTick,
-            uint128(amountIn),
-            tokenIn,
-            address(JUSD)
-        );
+        // Validate path starts with expected token
+        if (tokenIn != expectedToken) revert InvalidPath();
 
+        // Calculate expected output using TWAP across all hops
+        uint256 expectedOutput = calculateExpectedOutputMultiHop(path, amountIn);
+
+        // Apply slippage tolerance
         uint256 minOutput = (expectedOutput * (10000 - maxSlippageBps)) / 10000;
 
-        IERC20(tokenIn).forceApprove(swapRouter, amountIn);  // SafeERC20 handles non-standard tokens
+        // Approve router to spend tokens
+        IERC20(tokenIn).forceApprove(swapRouter, amountIn);
 
-        ISwapRouter(swapRouter).exactInputSingle(
-            ISwapRouter.ExactInputSingleParams({
-                tokenIn: tokenIn,
-                tokenOut: address(JUSD),
-                fee: feeTier,
+        // Execute multi-hop swap
+        ISwapRouter(swapRouter).exactInput(
+            ISwapRouter.ExactInputParams({
+                path: path,
                 recipient: address(this),
-                deadline: block.timestamp + 5 minutes,  // Buffer against miner timestamp manipulation
+                deadline: block.timestamp + 5 minutes,
                 amountIn: amountIn,
-                amountOutMinimum: minOutput,
-                sqrtPriceLimitX96: 0  // No price limit
+                amountOutMinimum: minOutput
             })
         );
+    }
+
+    /**
+     * @notice Validate that a swap path ends with JUSD
+     * @param path The encoded swap path
+     * @dev Reverts if path doesn't end with JUSD address
+     */
+    function _validatePath(bytes memory path) internal view {
+        // Get the last token in the path
+        // Path format: token0 (20) + fee (3) + token1 (20) + fee (3) + ... + tokenN (20)
+        // Last token starts at: path.length - 20
+        require(path.length >= 43, "Invalid path length"); // Minimum: 20 + 3 + 20
+
+        address lastToken;
+        assembly {
+            // Load the last 20 bytes as an address
+            // mload loads 32 bytes, so we need to shift right to get address (20 bytes)
+            lastToken := shr(96, mload(add(add(path, 0x20), sub(mload(path), 20))))
+        }
+
+        if (lastToken != address(JUSD)) revert InvalidPath();
+    }
+
+    /**
+     * @notice Calculate expected JUSD output for any swap path using TWAP oracle
+     * @param path The encoded swap path (single or multi-hop)
+     *             Single-hop: abi.encodePacked(tokenIn, fee, JUSD)
+     *             Multi-hop:  abi.encodePacked(tokenIn, fee, tokenMid, fee, ..., JUSD)
+     * @param amountIn The input amount
+     * @return expectedOut Expected JUSD output based on TWAP across all hops
+     * @dev This function can be called off-chain to validate expected output before triggering collection
+     * @dev Works for both single-hop and multi-hop paths
+     */
+    function calculateExpectedOutputMultiHop(
+        bytes memory path,
+        uint256 amountIn
+    ) public view returns (uint256 expectedOut) {
+        expectedOut = amountIn;
+        bytes memory remainingPath = path;
+
+        // Iterate through each hop in the path
+        while (true) {
+            bool hasMore = remainingPath.hasMultiplePools();
+
+            // Decode current pool
+            (address tokenIn, address tokenOut, uint24 fee) = remainingPath.decodeFirstPool();
+
+            // Get pool address
+            address pool = _computePoolAddress(FACTORY, tokenIn, tokenOut, fee);
+
+            // Get TWAP tick for this pool
+            (int24 twapTick, ) = OracleLibrary.consult(pool, twapPeriod);
+
+            // Calculate expected output for this hop
+            expectedOut = OracleLibrary.getQuoteAtTick(
+                twapTick,
+                uint128(expectedOut),
+                tokenIn,
+                tokenOut
+            );
+
+            // If no more pools, we're done
+            if (!hasMore) break;
+
+            // Move to next hop
+            remainingPath = remainingPath.skipToken();
+        }
     }
 
     /**
@@ -210,31 +286,6 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     ) internal view returns (address pool) {
         pool = IUniswapV3Factory(factory).getPool(tokenA, tokenB, fee);
         if (pool == address(0)) revert PoolDoesNotExist();
-    }
-
-    /**
-     * @notice Calculate expected JUSD output for a single-hop swap using TWAP oracle
-     * @param tokenIn The input token address
-     * @param amountIn The input amount
-     * @param feeTier The fee tier for the tokenIn/JUSD pool
-     * @return expectedOut Expected JUSD output based on TWAP
-     * @dev This function can be called off-chain to validate expected output before triggering collection
-     */
-    function calculateExpectedOutputTWAP(
-        address tokenIn,
-        uint256 amountIn,
-        uint24 feeTier
-    ) external view returns (uint256 expectedOut) {
-        address pool = _computePoolAddress(FACTORY, tokenIn, address(JUSD), feeTier);
-
-        (int24 twapTick, ) = OracleLibrary.consult(pool, twapPeriod);
-
-        expectedOut = OracleLibrary.getQuoteAtTick(
-            twapTick,
-            uint128(amountIn),
-            tokenIn,
-            address(JUSD)
-        );
     }
 
     // ============ Admin Functions ============
@@ -267,5 +318,20 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
         swapRouter = newRouter;
 
         emit SwapRouterUpdated(oldRouter, newRouter);
+    }
+
+    /**
+     * @notice Authorize or deauthorize a fee collector address
+     * @param collector The address to authorize/deauthorize
+     * @param authorized True to authorize, false to revoke authorization
+     * @dev Only callable by owner (JuiceSwapGovernor)
+     * @dev Managed via governance veto system (14-day period, 1000 JUSD fee, 2% veto threshold)
+     */
+    function setCollectorAuthorization(address collector, bool authorized) external onlyOwner {
+        if (collector == address(0)) revert InvalidAddress();
+
+        authorizedCollectors[collector] = authorized;
+
+        emit CollectorAuthorizationChanged(collector, authorized);
     }
 }

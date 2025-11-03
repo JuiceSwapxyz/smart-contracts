@@ -8,6 +8,13 @@ import "../interfaces/IUniswapV3Pool.sol";
 /// @title Oracle library
 /// @notice Provides functions to integrate with V3 pool oracle
 /// @dev Adapted from Uniswap V3 OracleLibrary for Solidity 0.8.x
+///
+/// DEVIATIONS FROM AUDITED SOURCE:
+/// - Source: Uniswap/v3-periphery/contracts/libraries/OracleLibrary.sol
+/// - Pragma upgraded from ">=0.5.0 <0.8.0" to "^0.8.0"
+/// - PARTIAL IMPLEMENTATION: Only includes consult() and getQuoteAtTick()
+/// - Omitted: getOldestObservationSecondsAgo, getBlockStartingTickAndLiquidity,
+///   getWeightedArithmeticMeanTick, getChainedPrice, and WeightedTickData struct
 library OracleLibrary {
     /// @notice Calculates time-weighted means of tick and liquidity for a given Uniswap V3 pool
     /// @param pool Address of the pool that we want to observe
