@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import "./libraries/OracleLibrary.sol";
 import "./libraries/Path.sol";
 import "./interfaces/IUniswapV3Pool.sol";
@@ -47,22 +48,17 @@ interface IUniswapV3Factory {
 contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using Path for bytes;
-
-    // ============ Immutables ============
+    using BytesLib for bytes;
 
     IERC20 public immutable JUSD;
     IEquity public immutable JUICE;
     address public immutable FACTORY; // Uniswap V3 Factory for pool address computation
-
-    // ============ State Variables ============
 
     address public swapRouter; // Uniswap V3 SwapRouter address
     uint32 public twapPeriod; // TWAP observation period in seconds
     uint256 public maxSlippageBps; // Maximum allowed slippage in basis points (e.g., 200 = 2%)
 
     mapping(address => bool) public authorizedCollectors; // Addresses authorized to collect fees
-
-    // ============ Events ============
 
     event FeesReinvested(
         address indexed pool,
@@ -76,15 +72,11 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     event FactoryOwnerUpdated(address indexed newOwner);
     event FeeAmountEnabled(uint24 indexed fee, int24 indexed tickSpacing);
 
-    // ============ Errors ============
-
     error InvalidAddress();
     error InvalidParams();
     error PoolDoesNotExist();
     error Unauthorized();
     error InvalidPath();
-
-    // ============ Constructor ============
 
     constructor(
         address _jusd,
@@ -109,23 +101,19 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
         maxSlippageBps = 200;
     }
 
-    // ============ Fee Collection Functions ============
-
     /**
      * @notice Collect protocol fees from a pool, swap to JUSD, and deposit to Equity
      * @param pool The Uniswap V3 pool to collect fees from
      * @param path0 Encoded swap path for token0→JUSD (empty bytes if token0 is JUSD)
      * @param path1 Encoded swap path for token1→JUSD (empty bytes if token1 is JUSD)
      *
-     * @dev PERMISSIONED - Only authorized collectors can call
-     * @dev Authorized collectors are managed by JuiceSwapGovernor via veto system
-     * @dev This contract must be the protocol fee collector (Factory owner) for the pool
-     * @dev collectProtocol() only succeeds if this contract has permission to collect fees
-     * @dev All collected JUSD is sent directly to JUICE equity - no funds can be redirected
-     * @dev Uses TWAP oracle (configurable period) to prevent frontrunning attacks
-     * @dev Supports multi-hop swaps via encoded paths (e.g., WBTC→WETH→JUSD)
-     * @dev Path format: abi.encodePacked(tokenIn, fee, tokenMid, fee, JUSD)
-     * @dev TWAP validation protects against malicious routing even from compromised collectors
+     * @dev Only authorized collectors can call this function (managed by JuiceSwapGovernor via veto system).
+     * This contract must be the factory owner to successfully call collectProtocol() on pools. All collected
+     * JUSD is sent directly to JUICE equity and cannot be redirected.
+     *
+     * Supports single and multi-hop swaps with TWAP oracle protection to prevent frontrunning attacks.
+     * Path format: abi.encodePacked(tokenIn, fee, tokenMid, fee, ..., JUSD). TWAP validation protects
+     * against malicious routing even from compromised collectors.
      */
     function collectAndReinvestFees(
         address pool,
@@ -173,8 +161,9 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
      *             Multi-hop:  abi.encodePacked(tokenIn, fee, tokenMid, fee, ..., JUSD)
      * @param amountIn The amount to swap
      * @param expectedToken The token expected to be at the start of the path
-     * @dev Uses TWAP oracles across all hops for manipulation protection
-     * @dev Uniswap's exactInput() efficiently handles both single and multi-hop swaps
+     *
+     * @dev Uses TWAP oracles across all hops for manipulation protection. Uniswap's exactInput()
+     * efficiently handles both single and multi-hop swaps.
      */
     function _swapToJUSD(bytes memory path, uint256 amountIn, address expectedToken) internal {
         // Validate path ends with JUSD
@@ -213,17 +202,12 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
      * @dev Reverts if path doesn't end with JUSD address
      */
     function _validatePath(bytes memory path) internal view {
-        // Get the last token in the path
         // Path format: token0 (20) + fee (3) + token1 (20) + fee (3) + ... + tokenN (20)
-        // Last token starts at: path.length - 20
-        require(path.length >= 43, "Invalid path length"); // Minimum: 20 + 3 + 20
+        // Minimum path length: 20 + 3 + 20 = 43 bytes
+        if (path.length < 43) revert InvalidPath();
 
-        address lastToken;
-        assembly {
-            // Load the last 20 bytes as an address
-            // mload loads 32 bytes, so we need to shift right to get address (20 bytes)
-            lastToken := shr(96, mload(add(add(path, 0x20), sub(mload(path), 20))))
-        }
+        // Use Uniswap's audited BytesLib to extract last token
+        address lastToken = path.toAddress(path.length - 20);
 
         if (lastToken != address(JUSD)) revert InvalidPath();
     }
@@ -235,8 +219,9 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
      *             Multi-hop:  abi.encodePacked(tokenIn, fee, tokenMid, fee, ..., JUSD)
      * @param amountIn The input amount
      * @return expectedOut Expected JUSD output based on TWAP across all hops
-     * @dev This function can be called off-chain to validate expected output before triggering collection
-     * @dev Works for both single-hop and multi-hop paths
+     *
+     * @dev This function can be called off-chain to validate expected output before triggering collection.
+     * Works for both single-hop and multi-hop paths.
      */
     function calculateExpectedOutputMultiHop(
         bytes memory path,
@@ -261,7 +246,7 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
             // Calculate expected output for this hop
             expectedOut = OracleLibrary.getQuoteAtTick(
                 twapTick,
-                uint128(expectedOut),
+                SafeCast.toUint128(expectedOut),
                 tokenIn,
                 tokenOut
             );
@@ -291,8 +276,6 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
         pool = IUniswapV3Factory(factory).getPool(tokenA, tokenB, fee);
         if (pool == address(0)) revert PoolDoesNotExist();
     }
-
-    // ============ Admin Functions ============
 
     /**
      * @notice Update TWAP period and slippage protection parameters
@@ -328,8 +311,9 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
      * @notice Authorize or deauthorize a fee collector address
      * @param collector The address to authorize/deauthorize
      * @param authorized True to authorize, false to revoke authorization
-     * @dev Only callable by owner (JuiceSwapGovernor)
-     * @dev Managed via governance veto system (14-day period, 1000 JUSD fee, 2% veto threshold)
+     *
+     * @dev Only callable by owner (JuiceSwapGovernor). Managed via governance veto system
+     * (14-day period, 1000 JUSD fee, 2% veto threshold).
      */
     function setCollectorAuthorization(address collector, bool authorized) external onlyOwner {
         if (collector == address(0)) revert InvalidAddress();
@@ -342,8 +326,9 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     /**
      * @notice Transfer factory ownership to a new address
      * @param _owner The new factory owner address
-     * @dev Only callable by owner (JuiceSwapGovernor)
-     * @dev Use this to transfer factory control if needed (emergency or upgrade)
+     *
+     * @dev Only callable by owner (JuiceSwapGovernor). Use this to transfer factory control
+     * if needed (emergency or upgrade).
      */
     function setFactoryOwner(address _owner) external onlyOwner {
         if (_owner == address(0)) revert InvalidAddress();
@@ -357,8 +342,8 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
      * @notice Enable a new fee tier on the factory
      * @param fee The fee amount in hundredths of a bip (e.g., 500 = 0.05%)
      * @param tickSpacing The tick spacing for the fee tier
-     * @dev Only callable by owner (JuiceSwapGovernor)
-     * @dev Fee tiers can never be removed once enabled
+     *
+     * @dev Only callable by owner (JuiceSwapGovernor). Fee tiers can never be removed once enabled.
      */
     function enableFeeAmount(uint24 fee, int24 tickSpacing) external onlyOwner {
         IUniswapV3Factory(FACTORY).enableFeeAmount(fee, tickSpacing);

@@ -19,18 +19,12 @@ import "./IEquity.sol";
 contract JuiceSwapGovernor is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    // ============ Constants ============
-
-    uint256 public constant PROPOSAL_FEE = 1000 * 10**18; // 1000 JUSD
+    uint256 public constant PROPOSAL_FEE = 1000 ether; // 1000 JUSD
     uint256 public constant MIN_APPLICATION_PERIOD = 14 days;
-    uint32 public constant QUORUM = 200; // 2% in basis points (200/10000 = 2%)
-
-    // ============ Immutables ============
+    // Note: Veto threshold (2%) is enforced by JUICE.checkQualified(), not by this contract
 
     IERC20 public immutable JUSD;
     IEquity public immutable JUICE;
-
-    // ============ State Variables ============
 
     uint256 public proposalCount;
 
@@ -57,8 +51,6 @@ contract JuiceSwapGovernor is ReentrancyGuard {
 
     mapping(uint256 => Proposal) public proposals;
 
-    // ============ Events ============
-
     event ProposalCreated(
         uint256 indexed proposalId,
         address indexed proposer,
@@ -67,12 +59,9 @@ contract JuiceSwapGovernor is ReentrancyGuard {
         uint256 executeAfter,
         string description
     );
-
     event ProposalExecuted(uint256 indexed proposalId, address indexed executor);
     event ProposalVetoed(uint256 indexed proposalId, address indexed vetoer);
     event ProposalFeeCollected(uint256 indexed proposalId, uint256 amount);
-
-    // ============ Errors ============
 
     error PeriodTooShort();
     error ProposalNotReady();
@@ -82,8 +71,7 @@ contract JuiceSwapGovernor is ReentrancyGuard {
     error ExecutionFailed();
     error ProposalNotFound();
     error InvalidAddress();
-
-    // ============ Constructor ============
+    error InvalidTarget();
 
     constructor(address _jusd, address _juice) {
         if (_jusd == address(0)) revert InvalidAddress();
@@ -92,8 +80,6 @@ contract JuiceSwapGovernor is ReentrancyGuard {
         JUSD = IERC20(_jusd);
         JUICE = IEquity(_juice);
     }
-
-    // ============ Core Functions ============
 
     /**
      * @notice Propose a governance action on JuiceSwap contracts
@@ -108,7 +94,8 @@ contract JuiceSwapGovernor is ReentrancyGuard {
         uint256 applicationPeriod,
         string calldata description
     ) external returns (uint256 proposalId) {
-        if (target == address(0)) revert InvalidAddress();
+        if (target == address(0)) revert InvalidTarget();
+        if (target == address(this)) revert InvalidTarget();
         if (applicationPeriod < MIN_APPLICATION_PERIOD) revert PeriodTooShort();
 
         // Transfer fee from proposer directly to JUICE equity (increases JUICE price!)
@@ -148,23 +135,8 @@ contract JuiceSwapGovernor is ReentrancyGuard {
 
         proposal.executed = true;
 
-        // Execute the proposal with return bomb DoS protection
-        // Uses assembly to prevent unbounded return data copying
-        address target = proposal.target;
-        bytes memory data = proposal.data;
-
-        bool success;
-        assembly {
-            success := call(
-                gas(),                    // Forward all gas (EIP-150 protects caller)
-                target,                   // Target contract address
-                0,                        // No ETH value
-                add(data, 0x20),          // Calldata pointer (skip length prefix)
-                mload(data),              // Calldata length
-                0,                        // Don't allocate return data buffer
-                0                         // Return data size = 0 (prevents DoS)
-            )
-        }
+        // Execute the proposal
+        (bool success, ) = proposal.target.call(proposal.data);
         if (!success) revert ExecutionFailed();
 
         emit ProposalExecuted(proposalId, msg.sender);
@@ -175,24 +147,19 @@ contract JuiceSwapGovernor is ReentrancyGuard {
      * @param proposalId The ID of the proposal to veto
      * @param helpers Addresses that delegated their votes to msg.sender (incrementally sorted, no duplicates)
      *
-     * @dev This integrates with JUICE voting power from the Equity contract.
-     * The vetoer must have at least 2% of the total votes (holding-period-weighted).
-     * You can include delegates who have delegated their votes to you.
+     * @dev This integrates with JUICE voting power from the Equity contract. The vetoer must have at least
+     * 2% of the total votes (holding-period-weighted). You can include delegates who have delegated their
+     * votes to you.
      *
-     * @dev Flash Loan Protection Analysis:
-     * The JUICE token uses time-weighted voting where votes = balance × holding duration.
-     * This provides complete protection against flash loan attacks:
+     * Flash Loan Protection: The JUICE token uses time-weighted voting where votes = balance × holding
+     * duration. This provides complete protection against flash loan attacks. Flash-loaned tokens have ZERO
+     * holding duration within the transaction. Vote anchors adjust on transfer to preserve existing votes
+     * without granting instant voting power to newly transferred tokens. Since block.timestamp is constant
+     * within a transaction, no time passes, and flash loans must be repaid in the same transaction, giving
+     * attackers no time advantage. Example: Attacker flash loans 10,000 JUICE (0 seconds held) = 0 new votes.
      *
-     * - Flash-loaned tokens have ZERO holding duration within the transaction
-     * - Vote anchors adjust on transfer to preserve existing votes without granting
-     *   instant voting power to newly transferred tokens
-     * - block.timestamp is constant within a transaction, so no time passes
-     * - Flash loans must be repaid in same transaction, giving attacker no time advantage
-     *
-     * Example: Attacker flash loans 10,000 JUICE (0 seconds held) = 0 new votes
-     *
-     * This mechanism is based on the audited Frankencoin design (ChainSecurity 2023).
-     * The 14-day application period and 2% quorum provide additional security layers.
+     * This mechanism is based on the audited Frankencoin design (ChainSecurity 2023). The 14-day application
+     * period and 2% veto threshold provide additional security layers.
      */
     function veto(uint256 proposalId, address[] calldata helpers) external {
         Proposal storage proposal = proposals[proposalId];
@@ -209,8 +176,6 @@ contract JuiceSwapGovernor is ReentrancyGuard {
 
         emit ProposalVetoed(proposalId, msg.sender);
     }
-
-    // ============ View Functions ============
 
     /**
      * @notice Get voting power of an address (including delegated votes)
