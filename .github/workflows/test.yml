@@ -35,9 +35,6 @@ jobs:
       - name: Run unit tests
         run: npx hardhat test test/JuiceSwapGovernor.test.ts --network hardhat
 
-      - name: Run integration tests
-        run: npx hardhat test test/JuiceSwapGovernor.integration.test.ts --network hardhat
-
       - name: Run all tests
         run: CI=true npx hardhat test --network hardhat
 
