@@ -58,7 +58,7 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     uint32 public twapPeriod; // TWAP observation period in seconds
     uint256 public maxSlippageBps; // Maximum allowed slippage in basis points (e.g., 200 = 2%)
 
-    mapping(address => bool) public authorizedCollectors; // Addresses authorized to collect fees
+    address public authorizedCollector; // Address authorized to collect fees
 
     event FeesReinvested(
         address indexed pool,
@@ -68,7 +68,7 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     );
     event SwapRouterUpdated(address indexed oldRouter, address indexed newRouter);
     event ProtectionParamsUpdated(uint32 twapPeriod, uint256 maxSlippageBps);
-    event CollectorAuthorizationChanged(address indexed collector, bool authorized);
+    event CollectorUpdated(address indexed oldCollector, address indexed newCollector);
     event FactoryOwnerUpdated(address indexed newOwner);
     event FeeAmountEnabled(uint24 indexed fee, int24 indexed tickSpacing);
 
@@ -107,7 +107,7 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
      * @param path0 Encoded swap path for token0→JUSD (empty bytes if token0 is JUSD)
      * @param path1 Encoded swap path for token1→JUSD (empty bytes if token1 is JUSD)
      *
-     * @dev Only authorized collectors can call this function (managed by JuiceSwapGovernor via veto system).
+     * @dev Only the authorized collector can call this function (managed by JuiceSwapGovernor via veto system).
      * This contract must be the factory owner to successfully call collectProtocol() on pools. All collected
      * JUSD is sent directly to JUICE equity and cannot be redirected.
      *
@@ -120,7 +120,7 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
         bytes calldata path0,
         bytes calldata path1
     ) external nonReentrant returns (uint256 jusdReceived) {
-        if (!authorizedCollectors[msg.sender]) revert Unauthorized();
+        if (msg.sender != authorizedCollector) revert Unauthorized();
         IUniswapV3Pool v3Pool = IUniswapV3Pool(pool);
 
         address token0 = v3Pool.token0();
@@ -308,19 +308,19 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Authorize or deauthorize a fee collector address
-     * @param collector The address to authorize/deauthorize
-     * @param authorized True to authorize, false to revoke authorization
+     * @notice Set the authorized fee collector address
+     * @param collector The new collector address
      *
      * @dev Only callable by owner (JuiceSwapGovernor). Managed via governance veto system
      * (14-day period, 1000 JUSD fee, 2% veto threshold).
      */
-    function setCollectorAuthorization(address collector, bool authorized) external onlyOwner {
+    function setCollector(address collector) external onlyOwner {
         if (collector == address(0)) revert InvalidAddress();
 
-        authorizedCollectors[collector] = authorized;
+        address oldCollector = authorizedCollector;
+        authorizedCollector = collector;
 
-        emit CollectorAuthorizationChanged(collector, authorized);
+        emit CollectorUpdated(oldCollector, collector);
     }
 
     /**

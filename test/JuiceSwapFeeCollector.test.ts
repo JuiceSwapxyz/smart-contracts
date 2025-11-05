@@ -222,7 +222,7 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
    * Full integration fixture with REAL Uniswap V3 contracts
    */
   async function deployFeeCollectorFixture() {
-    const [owner, collector1, collector2, unauthorized, trader] = await ethers.getSigners();
+    const [owner, collector, unauthorized, trader] = await ethers.getSigners();
 
     // ============================================================
     // 1. DEPLOY TOKENS
@@ -365,7 +365,7 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
     // Increase slippage tolerance for testing (default 2% is too tight with test setup)
     await feeCollector.connect(owner).setProtectionParams(1800, 1000); // 10% max slippage
 
-    await feeCollector.connect(owner).setCollectorAuthorization(collector1.address, true);
+    await feeCollector.connect(owner).setCollector(collector.address);
 
     // ============================================================
     // 9. SETUP LIQUIDITY AND GENERATE PROTOCOL FEES
@@ -440,49 +440,51 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
       wbtcWethPool,
       wbtcUsdtPool,
       owner,
-      collector1,
-      collector2,
+      collector,
       unauthorized,
       trader
     };
   }
 
   describe("Collector Authorization", function () {
-    it("Should allow owner to authorize collectors", async function () {
-      const { feeCollector, owner, collector1 } = await loadFixture(deployFeeCollectorFixture);
+    it("Should allow owner to set collector", async function () {
+      const { feeCollector, owner, unauthorized } = await loadFixture(deployFeeCollectorFixture);
 
-      await expect(feeCollector.connect(owner).setCollectorAuthorization(collector1.address, true))
-        .to.emit(feeCollector, "CollectorAuthorizationChanged")
-        .withArgs(collector1.address, true);
+      // collector is already set in fixture, so let's set a different one
+      await expect(feeCollector.connect(owner).setCollector(unauthorized.address))
+        .to.emit(feeCollector, "CollectorUpdated")
+        .withArgs(await feeCollector.authorizedCollector(), unauthorized.address);
 
-      expect(await feeCollector.authorizedCollectors(collector1.address)).to.be.true;
+      expect(await feeCollector.authorizedCollector()).to.equal(unauthorized.address);
     });
 
-    it("Should allow owner to deauthorize collectors", async function () {
-      const { feeCollector, owner, collector1 } = await loadFixture(deployFeeCollectorFixture);
+    it("Should allow owner to update collector", async function () {
+      const { feeCollector, owner, collector, unauthorized } = await loadFixture(deployFeeCollectorFixture);
 
-      await feeCollector.connect(owner).setCollectorAuthorization(collector1.address, true);
+      // collector is already set in fixture
+      expect(await feeCollector.authorizedCollector()).to.equal(collector.address);
 
-      await expect(feeCollector.connect(owner).setCollectorAuthorization(collector1.address, false))
-        .to.emit(feeCollector, "CollectorAuthorizationChanged")
-        .withArgs(collector1.address, false);
+      // Update to new collector
+      await expect(feeCollector.connect(owner).setCollector(unauthorized.address))
+        .to.emit(feeCollector, "CollectorUpdated")
+        .withArgs(collector.address, unauthorized.address);
 
-      expect(await feeCollector.authorizedCollectors(collector1.address)).to.be.false;
+      expect(await feeCollector.authorizedCollector()).to.equal(unauthorized.address);
     });
 
-    it("Should revert if non-owner tries to authorize", async function () {
-      const { feeCollector, collector1, unauthorized } = await loadFixture(deployFeeCollectorFixture);
+    it("Should revert if non-owner tries to set collector", async function () {
+      const { feeCollector, unauthorized } = await loadFixture(deployFeeCollectorFixture);
 
       await expect(
-        feeCollector.connect(unauthorized).setCollectorAuthorization(collector1.address, true)
+        feeCollector.connect(unauthorized).setCollector(unauthorized.address)
       ).to.be.revertedWithCustomError(feeCollector, "OwnableUnauthorizedAccount");
     });
 
-    it("Should revert if authorizing zero address", async function () {
+    it("Should revert if setting zero address", async function () {
       const { feeCollector, owner } = await loadFixture(deployFeeCollectorFixture);
 
       await expect(
-        feeCollector.connect(owner).setCollectorAuthorization(ethers.ZeroAddress, true)
+        feeCollector.connect(owner).setCollector(ethers.ZeroAddress)
       ).to.be.revertedWithCustomError(feeCollector, "InvalidAddress");
     });
   });
@@ -494,11 +496,10 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
     // 2. Use a separate fixture with actual fee accumulation
     // This test verifies: Fee collection mechanism works and swaps tokens to JUSD correctly
     it.skip("Should collect fees and swap via single-hop path", async function () {
-      const { feeCollector, jusd, juice, wbtc, weth, usdt, wbtcUsdtPool, owner, collector1 } =
+      const { feeCollector, jusd, juice, wbtc, weth, usdt, wbtcUsdtPool, owner, collector } =
         await loadFixture(deployFeeCollectorFixture);
 
-      // Authorize collector
-      await feeCollector.connect(owner).setCollectorAuthorization(collector1.address, true);
+      // collector is already authorized in fixture
 
       // Encode paths for WBTC/USDT pool
       // WBTC (token0) → WETH → JUSD (multi-hop)
@@ -516,7 +517,7 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
       const juiceBalanceBefore = await jusd.balanceOf(await juice.getAddress());
       const feeCollectorWbtcBefore = await wbtc.balanceOf(await feeCollector.getAddress());
 
-      const tx = await feeCollector.connect(collector1).collectAndReinvestFees(
+      const tx = await feeCollector.connect(collector).collectAndReinvestFees(
         await wbtcUsdtPool.getAddress(),
         wbtcPath,
         usdtPath
@@ -548,11 +549,11 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
     // 2. Use a separate fixture with actual fee accumulation
     // This test verifies: Multi-hop swap paths work correctly for fee collection
     it.skip("Should collect and swap via 2-hop path (WBTC → WETH → JUSD)", async function () {
-      const { feeCollector, jusd, juice, wbtc, weth, wbtcUsdtPool, owner, collector1 } =
+      const { feeCollector, jusd, juice, wbtc, weth, wbtcUsdtPool, owner, collector } =
         await loadFixture(deployFeeCollectorFixture);
 
       // Authorize collector
-      await feeCollector.connect(owner).setCollectorAuthorization(collector1.address, true);
+      // collector is already authorized in fixture
 
       // Encode 2-hop path: WBTC → WETH → JUSD
       const wbtcPath = ethers.solidityPacked(
@@ -563,7 +564,7 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
       const juiceBalanceBefore = await jusd.balanceOf(await juice.getAddress());
 
       await expect(
-        feeCollector.connect(collector1).collectAndReinvestFees(
+        feeCollector.connect(collector).collectAndReinvestFees(
           await wbtcUsdtPool.getAddress(),
           wbtcPath,
           "0x" // Empty path for token1
@@ -606,13 +607,13 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
     });
 
     it("Should allow authorized collector to collect", async function () {
-      const { feeCollector, wbtcUsdtPool, owner, collector1 } =
+      const { feeCollector, wbtcUsdtPool, collector } =
         await loadFixture(deployFeeCollectorFixture);
 
-      await feeCollector.connect(owner).setCollectorAuthorization(collector1.address, true);
+      // collector is already authorized in fixture
 
       // Should not revert
-      await feeCollector.connect(collector1).collectAndReinvestFees(
+      await feeCollector.connect(collector).collectAndReinvestFees(
         await wbtcUsdtPool.getAddress(),
         "0x",
         "0x"
@@ -628,10 +629,10 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
     // 2. Mock the fee collection to force the validation path
     // This test verifies: Security - invalid swap paths are rejected
     it.skip("Should revert if path doesn't end with JUSD", async function () {
-      const { feeCollector, wbtc, weth, wbtcUsdtPool, owner, collector1 } =
+      const { feeCollector, wbtc, weth, wbtcUsdtPool, owner, collector } =
         await loadFixture(deployFeeCollectorFixture);
 
-      await feeCollector.connect(owner).setCollectorAuthorization(collector1.address, true);
+      // collector is already authorized in fixture
 
       // Invalid path: WBTC → WETH (doesn't end with JUSD)
       const invalidPath = ethers.solidityPacked(
@@ -640,7 +641,7 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
       );
 
       await expect(
-        feeCollector.connect(collector1).collectAndReinvestFees(
+        feeCollector.connect(collector).collectAndReinvestFees(
           await wbtcUsdtPool.getAddress(),
           invalidPath,
           "0x"
@@ -649,10 +650,10 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
     });
 
     it("Should accept valid paths ending with JUSD", async function () {
-      const { feeCollector, wbtc, weth, jusd, wbtcUsdtPool, owner, collector1 } =
+      const { feeCollector, wbtc, weth, jusd, wbtcUsdtPool, owner, collector } =
         await loadFixture(deployFeeCollectorFixture);
 
-      await feeCollector.connect(owner).setCollectorAuthorization(collector1.address, true);
+      // collector is already authorized in fixture
 
       // Valid path: WBTC → WETH → JUSD
       const validPath = ethers.solidityPacked(
@@ -661,7 +662,7 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
       );
 
       // Should not revert
-      await feeCollector.connect(collector1).collectAndReinvestFees(
+      await feeCollector.connect(collector).collectAndReinvestFees(
         await wbtcUsdtPool.getAddress(),
         validPath,
         "0x"
@@ -728,13 +729,13 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
 
   describe("Edge Cases", function () {
     it("Should handle empty paths (token is already JUSD)", async function () {
-      const { feeCollector, wbtcUsdtPool, owner, collector1 } =
+      const { feeCollector, wbtcUsdtPool, owner, collector } =
         await loadFixture(deployFeeCollectorFixture);
 
-      await feeCollector.connect(owner).setCollectorAuthorization(collector1.address, true);
+      // collector is already authorized in fixture
 
       // Both paths empty (both tokens are JUSD, no swap needed)
-      await feeCollector.connect(collector1).collectAndReinvestFees(
+      await feeCollector.connect(collector).collectAndReinvestFees(
         await wbtcUsdtPool.getAddress(),
         "0x",
         "0x"
@@ -742,19 +743,19 @@ describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
     });
 
     it("Should handle zero protocol fees gracefully", async function () {
-      const { feeCollector, wbtcUsdtPool, owner, collector1 } =
+      const { feeCollector, wbtcUsdtPool, owner, collector } =
         await loadFixture(deployFeeCollectorFixture);
 
-      await feeCollector.connect(owner).setCollectorAuthorization(collector1.address, true);
+      // collector is already authorized in fixture
 
       // Collect twice (second time should have zero fees)
-      await feeCollector.connect(collector1).collectAndReinvestFees(
+      await feeCollector.connect(collector).collectAndReinvestFees(
         await wbtcUsdtPool.getAddress(),
         "0x",
         "0x"
       );
 
-      await feeCollector.connect(collector1).collectAndReinvestFees(
+      await feeCollector.connect(collector).collectAndReinvestFees(
         await wbtcUsdtPool.getAddress(),
         "0x",
         "0x"
