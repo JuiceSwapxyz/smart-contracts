@@ -1,5 +1,6 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
+import "hardhat-dependency-compiler";
 import "dotenv/config";
 import { task } from "hardhat/config";
 
@@ -12,13 +13,26 @@ task("create-nft", "Deploy First Squeezer NFT from image to contract")
 
 const config: HardhatUserConfig = {
   solidity: {
-    version: "0.8.20",
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 200,
+    compilers: [
+      {
+        version: "0.8.20",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+        },
       },
-    },
+      {
+        version: "0.7.6",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 800,
+          },
+        },
+      },
+    ],
   },
   etherscan: {
     apiKey: {
@@ -59,6 +73,12 @@ const config: HardhatUserConfig = {
     tests: "./test",
     cache: "./cache",
     artifacts: "./artifacts",
+  },
+  dependencyCompiler: {
+    paths: [
+      "@juicedollar/jusd/contracts/JuiceDollar.sol",
+      "@juicedollar/jusd/contracts/Equity.sol",
+    ],
   },
 };
 
