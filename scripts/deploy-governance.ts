@@ -6,38 +6,35 @@ import * as path from 'path'
  * Deploy JuiceSwapGovernor and transfer ownership from EOA to DAO
  */
 
-// Configuration
-const CITREA_RPC = 'https://rpc.citrea.xyz'
-const CITREA_CHAIN_ID = 62831
+// Validate all required addresses
+if (!process.env.JUSD_ADDRESS || !process.env.JUICE_ADDRESS || !process.env.FACTORY_ADDRESS || !process.env.SWAP_ROUTER_ADDRESS || !process.env.PROXY_ADMIN_ADDRESS) {
+  throw new Error('All governance addresses must be set in .env: JUSD_ADDRESS, JUICE_ADDRESS, FACTORY_ADDRESS, SWAP_ROUTER_ADDRESS, PROXY_ADMIN_ADDRESS')
+}
 
-// Addresses from deployment (from deploy-v3)
-const STATE_FILE = path.join(__dirname, '../../deploy-v3/state.json')
-
-// JUICE/JUSD addresses - must be set in environment
+// Now TypeScript knows these are defined
 const JUSD_ADDRESS = process.env.JUSD_ADDRESS
 const JUICE_ADDRESS = process.env.JUICE_ADDRESS
-
-if (!JUSD_ADDRESS || !JUICE_ADDRESS) {
-  throw new Error('JUSD_ADDRESS and JUICE_ADDRESS environment variables must be set')
-}
+const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS
+const SWAP_ROUTER_ADDRESS = process.env.SWAP_ROUTER_ADDRESS
+const PROXY_ADMIN_ADDRESS = process.env.PROXY_ADMIN_ADDRESS
 
 async function main() {
   console.log('🏛️  Deploying JuiceSwap Governance')
   console.log('===================================\n')
 
-  // Get signer from hardhat
+  // Get signer and network info
   const [deployer] = await ethers.getSigners()
+  const network = await ethers.provider.getNetwork()
+  const networkName = network.chainId === 5115n ? 'Citrea Testnet' : 'Citrea Mainnet'
 
   console.log('📍 Deployer:', deployer.address)
-  console.log('⛓️  Network: Citrea Mainnet')
-  console.log('🔗 RPC:', CITREA_RPC)
+  console.log('⛓️  Network:', networkName, `(Chain ID: ${network.chainId})`)
   console.log('')
 
-  // Load state.json to get deployed addresses
-  const state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
-  console.log('📦 Loaded JuiceSwap deployment state:')
-  console.log('   Factory:', state.v3CoreFactoryAddress)
-  console.log('   ProxyAdmin:', state.proxyAdminAddress)
+  console.log('📦 V3 Contracts:')
+  console.log('   Factory:', FACTORY_ADDRESS)
+  console.log('   SwapRouter:', SWAP_ROUTER_ADDRESS)
+  console.log('   ProxyAdmin:', PROXY_ADMIN_ADDRESS)
   console.log('')
 
   console.log('🪙 JUICE/JUSD Integration:')
@@ -72,22 +69,13 @@ async function main() {
   // Step 1b: Deploy JuiceSwapFeeCollector
   console.log('📝 Step 1b: Deploying JuiceSwapFeeCollector...')
 
-  // Get SwapRouter and Factory addresses from state.json
-  const swapRouter = state.swapRouter02
-  const factory = state.v3CoreFactoryAddress
-
-  console.log('📦 SwapRouter:', swapRouter)
-  console.log('📦 Factory:', factory)
-  console.log('📦 Owner (Governor):', governorAddress)
-  console.log('')
-
   const JuiceSwapFeeCollectorFactory = await ethers.getContractFactory('JuiceSwapFeeCollector')
 
   const feeCollector = await JuiceSwapFeeCollectorFactory.deploy(
     JUSD_ADDRESS,
     JUICE_ADDRESS,
-    swapRouter,
-    factory,
+    SWAP_ROUTER_ADDRESS,
+    FACTORY_ADDRESS,
     governorAddress,  // Governor owns FeeCollector
     {
       gasLimit: 3000000
@@ -107,7 +95,7 @@ async function main() {
     'function owner() view returns (address)',
     'function setOwner(address _owner)'
   ]
-  const factoryContract = new ethers.Contract(state.v3CoreFactoryAddress, factoryABI, deployer)
+  const factoryContract = new ethers.Contract(FACTORY_ADDRESS, factoryABI, deployer)
 
   const currentFactoryOwner = await factoryContract.owner()
   console.log('   Current Factory Owner:', currentFactoryOwner)
@@ -130,7 +118,7 @@ async function main() {
     'function owner() view returns (address)',
     'function transferOwnership(address newOwner)'
   ]
-  const proxyAdmin = new ethers.Contract(state.proxyAdminAddress, proxyAdminABI, deployer)
+  const proxyAdmin = new ethers.Contract(PROXY_ADMIN_ADDRESS, proxyAdminABI, deployer)
 
   const currentProxyOwner = await proxyAdmin.owner()
   console.log('   Current ProxyAdmin Owner:', currentProxyOwner)
@@ -171,17 +159,21 @@ async function main() {
     feeCollectorAddress: feeCollectorAddress,
     jusdAddress: JUSD_ADDRESS,
     juiceAddress: JUICE_ADDRESS,
-    factoryAddress: state.v3CoreFactoryAddress,
-    proxyAdminAddress: state.proxyAdminAddress,
-    swapRouterAddress: swapRouter,
+    factoryAddress: FACTORY_ADDRESS,
+    proxyAdminAddress: PROXY_ADMIN_ADDRESS,
+    swapRouterAddress: SWAP_ROUTER_ADDRESS,
     deployedAt: new Date().toISOString(),
     governorDeployTxHash: governor.deploymentTransaction()?.hash,
     feeCollectorDeployTxHash: feeCollector.deploymentTransaction()?.hash,
-    network: 'Citrea Mainnet',
-    chainId: CITREA_CHAIN_ID
+    network: networkName,
+    chainId: Number(network.chainId)
   }
 
-  const governanceFile = path.join(__dirname, '../governance-deployment.json')
+  // Save to deployments directory
+  const deploymentFolder = network.chainId === 5115n ? 'testnet' : 'mainnet'
+  const deployDir = path.join(__dirname, '../deployments', deploymentFolder)
+  fs.mkdirSync(deployDir, { recursive: true })
+  const governanceFile = path.join(deployDir, 'governance.json')
   fs.writeFileSync(governanceFile, JSON.stringify(governanceState, null, 2))
   console.log('\n📄 Governance deployment info saved to:', governanceFile)
 
@@ -191,8 +183,8 @@ async function main() {
   console.log('📊 Summary:')
   console.log('   Governor:', governorAddress)
   console.log('   FeeCollector:', feeCollectorAddress)
-  console.log('   Factory:', state.v3CoreFactoryAddress)
-  console.log('   ProxyAdmin:', state.proxyAdminAddress)
+  console.log('   Factory:', FACTORY_ADDRESS)
+  console.log('   ProxyAdmin:', PROXY_ADMIN_ADDRESS)
   console.log('')
   console.log('⚙️  Governance Parameters:')
   console.log('   Proposal Fee: 1000 JUSD (goes to JUICE equity)')
@@ -202,7 +194,7 @@ async function main() {
   console.log('🤖 Fee Collection:')
   console.log('   Fee Collector Contract:', feeCollectorAddress)
   console.log('   Keeper Address: Not set (use setFeeCollector proposal)')
-  console.log('   Swap Router:', swapRouter)
+  console.log('   Swap Router:', SWAP_ROUTER_ADDRESS)
   console.log('   TWAP Period: 30 minutes')
   console.log('   Max Slippage: 2%')
   console.log('   Frontrunning Protection: TWAP Oracle')

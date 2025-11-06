@@ -87,13 +87,16 @@ Automated protocol fee collection contract for JuiceSwap, owned and controlled b
 #### Deploy Governance
 
 ```bash
-# Configure environment
-export PRIVATE_KEY="..."        # Current Factory/ProxyAdmin owner
-export JUSD_ADDRESS="..."       # JuiceDollar contract
-export JUICE_ADDRESS="..."      # Equity contract
+# Configure .env with required addresses
+# DEPLOYER_PRIVATE_KEY - Current Factory/ProxyAdmin owner
+# JUSD_ADDRESS - JuiceDollar contract
+# JUICE_ADDRESS - Equity contract
+# FACTORY_ADDRESS - V3 Factory
+# SWAP_ROUTER_ADDRESS - V3 SwapRouter
+# PROXY_ADMIN_ADDRESS - V3 ProxyAdmin
 
 # Deploy both contracts and transfer ownership
-npx ts-node scripts/deploy-governance.ts
+npm run deploy:gov -- --network citreaTestnet
 ```
 
 This will:
@@ -101,14 +104,14 @@ This will:
 2. Deploy JuiceSwapFeeCollector contract (Governor is owner)
 3. Transfer Factory ownership to Governor
 4. Transfer ProxyAdmin ownership to Governor
-5. Save deployment info to `governance-deployment.json`
+5. Save deployment info to `deployments/{network}/governance.json`
 
 **Post-Deployment:**
 To enable fee collection, create a governance proposal to set the keeper address:
 
 ```typescript
 // Create proposal to set fee collector keeper
-const feeCollectorAddress = "0x..."; // From governance-deployment.json
+const feeCollectorAddress = "0x..."; // From deployments/{network}/governance.json
 const keeperAddress = "0x...";        // Your keeper bot address
 
 const data = governor.encodeSetFeeCollector(keeperAddress);
