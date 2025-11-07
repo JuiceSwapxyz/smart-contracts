@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Use yarn, not npm
+package-lock.json
+
 # Environment variables (NEVER COMMIT!)
 .env
 
