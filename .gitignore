@@ -7,7 +7,7 @@ node_modules/
 # Hardhat
 cache/
 artifacts/
-flattened-FirstSqueezerNFT.sol
+flattened-*.sol
 
 # TypeChain
 typechain-types/
@@ -25,3 +25,8 @@ gasReporterOutput.json
 # OS
 .DS_Store
 /.claude
+
+# Deployment files - local/test networks should be gitignored
+# Only production deployments (testnet/mainnet) should be committed after review
+deployments/localhost/
+deployments/hardhat/

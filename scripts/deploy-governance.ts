@@ -25,7 +25,16 @@ async function main() {
   // Get signer and network info
   const [deployer] = await ethers.getSigners()
   const network = await ethers.provider.getNetwork()
-  const networkName = network.chainId === 5115n ? 'Citrea Testnet' : 'Citrea Mainnet'
+
+  // Network configuration mapping
+  const NETWORK_CONFIG: Record<string, { name: string; folder: string }> = {
+    '5115': { name: 'Citrea Testnet', folder: 'testnet' },
+    '62831': { name: 'Citrea Mainnet', folder: 'mainnet' },
+  }
+
+  const chainIdStr = network.chainId.toString()
+  const { name: networkName, folder: deploymentFolder } =
+    NETWORK_CONFIG[chainIdStr] || { name: 'Localhost', folder: 'localhost' }
 
   console.log('📍 Deployer:', deployer.address)
   console.log('⛓️  Network:', networkName, `(Chain ID: ${network.chainId})`)
@@ -153,24 +162,45 @@ async function main() {
     console.log('⚠️  Warning: Ownership transfer incomplete!')
   }
 
-  // Save governance deployment info
+  // Save governance deployment info using standard schema
+  const blockNumber = await ethers.provider.getBlockNumber()
   const governanceState = {
-    governorAddress: governorAddress,
-    feeCollectorAddress: feeCollectorAddress,
-    jusdAddress: JUSD_ADDRESS,
-    juiceAddress: JUICE_ADDRESS,
-    factoryAddress: FACTORY_ADDRESS,
-    proxyAdminAddress: PROXY_ADMIN_ADDRESS,
-    swapRouterAddress: SWAP_ROUTER_ADDRESS,
-    deployedAt: new Date().toISOString(),
-    governorDeployTxHash: governor.deploymentTransaction()?.hash,
-    feeCollectorDeployTxHash: feeCollector.deploymentTransaction()?.hash,
-    network: networkName,
-    chainId: Number(network.chainId)
+    schemaVersion: '1.0',
+    network: {
+      name: networkName,
+      chainId: Number(network.chainId)
+    },
+    deployment: {
+      deployedAt: new Date().toISOString(),
+      deployedBy: deployer.address,
+      blockNumber: blockNumber
+    },
+    contracts: {
+      JuiceSwapGovernor: {
+        address: governorAddress,
+        deploymentTx: governor.deploymentTransaction()?.hash,
+        constructorArgs: [JUSD_ADDRESS, JUICE_ADDRESS]
+      },
+      JuiceSwapFeeCollector: {
+        address: feeCollectorAddress,
+        deploymentTx: feeCollector.deploymentTransaction()?.hash,
+        constructorArgs: [JUSD_ADDRESS, JUICE_ADDRESS, SWAP_ROUTER_ADDRESS, FACTORY_ADDRESS, governorAddress]
+      }
+    },
+    references: {
+      jusdAddress: JUSD_ADDRESS,
+      juiceAddress: JUICE_ADDRESS,
+      factoryAddress: FACTORY_ADDRESS,
+      proxyAdminAddress: PROXY_ADMIN_ADDRESS,
+      swapRouterAddress: SWAP_ROUTER_ADDRESS
+    },
+    metadata: {
+      deployer: 'JuiceSwapXyz/smart-contracts',
+      scriptVersion: '1.0.0'
+    }
   }
 
   // Save to deployments directory
-  const deploymentFolder = network.chainId === 5115n ? 'testnet' : 'mainnet'
   const deployDir = path.join(__dirname, '../deployments', deploymentFolder)
   fs.mkdirSync(deployDir, { recursive: true })
   const governanceFile = path.join(deployDir, 'governance.json')
