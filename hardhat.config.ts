@@ -66,6 +66,7 @@ const config: HardhatUserConfig = {
       url: process.env.CITREA_RPC_URL || "https://rpc.testnet.citrea.xyz",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
       chainId: 5115,
+      timeout: 300_000,
     },
   },
   paths: {
