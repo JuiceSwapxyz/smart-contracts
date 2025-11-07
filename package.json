@@ -4,10 +4,16 @@
   "description": "JuiceSwap Smart Contracts",
   "scripts": {
     "compile": "hardhat compile",
-    "test": "hardhat test"
+    "test": "hardhat test",
+    "test:nft": "hardhat test test/FirstSqueezerNFT.test.ts",
+    "test:gov": "hardhat test test/JuiceSwap*.test.ts",
+    "deploy:gov": "hardhat run scripts/deploy-governance.ts"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.0.1"
+    "@juicedollar/jusd": "github:JuiceDollar/smartContracts#develop",
+    "@openzeppelin/contracts": "^5.1.0",
+    "@uniswap/v3-core": "^1.0.1",
+    "@uniswap/v3-periphery": "^1.4.4"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-ethers": "^3.0.5",
@@ -20,6 +26,9 @@
     "ethers": "^6.10.0",
     "form-data": "^4.0.0",
     "hardhat": "^2.19.4",
+    "hardhat-dependency-compiler": "^1.2.1",
+    "prettier": "^3.1.1",
+    "prettier-plugin-solidity": "^1.2.0",
     "ts-node": "^10.9.2",
     "typechain": "^8.3.2",
     "typescript": "^5.3.3"

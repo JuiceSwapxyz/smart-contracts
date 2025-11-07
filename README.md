@@ -21,6 +21,110 @@ npm test
 
 ## Contracts
 
+### JuiceSwapGovernor
+
+Decentralized governance contract for JuiceSwap protocol, integrating with JUICE/JUSD veto system.
+
+**Features:**
+- **Community-controlled**: JUICE token holders govern JuiceSwap
+- **Proposal fee**: 1000 JUSD (sent to JUICE equity, increasing JUICE price)
+- **Veto period**: 14 days for community review
+- **Quorum**: 2% voting power required to veto
+- **Holding-weighted votes**: Longer JUICE holders have more voting power
+- **Separation**: Governance-only contract (fee collection in separate contract)
+
+**Details:**
+- **Contract**: `contracts/governance/JuiceSwapGovernor.sol`
+- **Network**: Citrea Mainnet (Chain ID: 62831)
+- **Controls**: Factory, ProxyAdmin, FeeCollector
+- **Size**: ~320 lines
+
+**Integration:**
+- **JUSD**: JuiceDollar stablecoin (proposal fee payment → equity)
+- **JUICE**: Equity token (voting power source)
+
+**Governance Process:**
+1. Anyone pays 1000 JUSD to create proposal (goes directly to JUICE equity)
+2. 14 day veto period begins
+3. JUICE holders with 2%+ voting power can veto
+4. If no veto, anyone can execute proposal
+
+---
+
+### JuiceSwapFeeCollector
+
+Automated protocol fee collection contract for JuiceSwap, owned and controlled by JuiceSwapGovernor.
+
+**Features:**
+- **Automated fee collection**: Collects protocol fees from Uniswap V3 pools
+- **TWAP-based protection**: Uses 30-minute TWAP oracle to prevent frontrunning
+- **Slippage protection**: Maximum 2% slippage on swaps
+- **Multi-hop swaps**: Supports complex swap paths to JUSD
+- **Fee destination**: All collected fees converted to JUSD and sent to JUICE equity
+- **Governance-controlled**: Only owner (Governor) can update settings
+
+**Details:**
+- **Contract**: `contracts/governance/JuiceSwapFeeCollector.sol`
+- **Owner**: JuiceSwapGovernor (controlled via proposals)
+- **Keeper**: Authorized address that can trigger fee collection
+- **Size**: ~380 lines
+
+**Security:**
+- Uses Uniswap's official TickMath library
+- SafeERC20 for non-standard token compatibility
+- ReentrancyGuard protection
+- Path validation (ensures swaps end with JUSD)
+- TWAP oracle prevents price manipulation
+
+**Configuration:**
+- **TWAP Period**: 30 minutes
+- **Max Slippage**: 2% (in basis points)
+- **SwapRouter**: Configurable via governance
+- **Keeper**: Configurable via governance
+
+---
+
+#### Deploy Governance
+
+```bash
+# Configure .env with required addresses
+# DEPLOYER_PRIVATE_KEY - Current Factory/ProxyAdmin owner
+# JUSD_ADDRESS - JuiceDollar contract
+# JUICE_ADDRESS - Equity contract
+# FACTORY_ADDRESS - V3 Factory
+# SWAP_ROUTER_ADDRESS - V3 SwapRouter
+# PROXY_ADMIN_ADDRESS - V3 ProxyAdmin
+
+# Deploy both contracts and transfer ownership
+npm run deploy:gov -- --network citreaTestnet
+```
+
+This will:
+1. Deploy JuiceSwapGovernor contract
+2. Deploy JuiceSwapFeeCollector contract (Governor is owner)
+3. Transfer Factory ownership to Governor
+4. Transfer ProxyAdmin ownership to Governor
+5. Save deployment info to `deployments/{network}/governance.json`
+
+**Post-Deployment:**
+To enable fee collection, create a governance proposal to set the keeper address:
+
+```typescript
+// Create proposal to set fee collector keeper
+const feeCollectorAddress = "0x..."; // From deployments/{network}/governance.json
+const keeperAddress = "0x...";        // Your keeper bot address
+
+const data = governor.encodeSetFeeCollector(keeperAddress);
+await governor.propose(
+  feeCollectorAddress,
+  data,
+  14 * 24 * 60 * 60, // 14 days
+  "Set fee collector keeper address"
+);
+```
+
+---
+
 ### FirstSqueezerNFT
 
 Campaign NFT contract for early JuiceSwap supporters.
