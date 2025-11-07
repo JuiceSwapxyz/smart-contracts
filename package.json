@@ -7,7 +7,8 @@
     "test": "hardhat test",
     "test:nft": "hardhat test test/FirstSqueezerNFT.test.ts",
     "test:gov": "hardhat test test/JuiceSwap*.test.ts",
-    "deploy:gov": "hardhat run scripts/deploy-governance.ts"
+    "deploy:gov": "hardhat run scripts/deploy-governance.ts",
+    "deploy:gov:testnet": "hardhat run scripts/deploy-governance.ts --network citreaTestnet"
   },
   "dependencies": {
     "@juicedollar/jusd": "github:JuiceDollar/smartContracts#develop",
