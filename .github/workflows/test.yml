@@ -18,10 +18,10 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '22.x'
-          cache: 'npm'
+          cache: 'yarn'
 
       - name: Install dependencies
-        run: npm ci
+        run: yarn install --frozen-lockfile
 
       - name: Create .env file
         run: |
@@ -53,10 +53,10 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '22.x'
-          cache: 'npm'
+          cache: 'yarn'
 
       - name: Install dependencies
-        run: npm ci
+        run: yarn install --frozen-lockfile
 
       - name: Check Solidity formatting
         run: npx prettier --check 'contracts/**/*.sol'

@@ -1,10 +1,42 @@
-import { ethers } from 'hardhat'
+import { ethers, network as hardhatNetwork } from 'hardhat'
 import * as fs from 'fs'
 import * as path from 'path'
 
 /**
  * Deploy JuiceSwapGovernor and transfer ownership from EOA to DAO
  */
+
+interface GasConfig {
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
+}
+
+/** Returns network-specific gas configuration (values in gwei). */
+function getGasConfig(networkName: string): GasConfig {
+  const configs: Record<string, GasConfig> = {
+    hardhat: {
+      maxFeePerGas: '10',
+      maxPriorityFeePerGas: '1',
+    },
+    localhost: {
+      maxFeePerGas: '10',
+      maxPriorityFeePerGas: '1',
+    },
+    citrea: {
+      maxFeePerGas: '0.01',
+      maxPriorityFeePerGas: '0.001',
+    },
+    citreaTestnet: {
+      maxFeePerGas: '0.01',
+      maxPriorityFeePerGas: '0.001',
+    },
+  }
+
+  if (!configs[networkName]) {
+    console.warn(`Unknown network "${networkName}", falling back to citreaTestnet gas config`);
+  }
+  return configs[networkName] || configs.citreaTestnet;
+}
 
 // Validate all required addresses
 if (!process.env.JUSD_ADDRESS || !process.env.JUICE_ADDRESS || !process.env.FACTORY_ADDRESS || !process.env.SWAP_ROUTER_ADDRESS || !process.env.PROXY_ADMIN_ADDRESS) {
@@ -56,19 +88,27 @@ async function main() {
   const balance = await provider.getBalance(deployer.address)
   console.log('💰 Deployer Balance:', ethers.formatEther(balance), 'cBTC\n')
 
+  const isLocal = hardhatNetwork.name === 'hardhat' || hardhatNetwork.name === 'localhost';
+  const confirmations = isLocal ? 1 : 6;
+  console.log(`⏳ Using ${confirmations} confirmation${confirmations > 1 ? 's' : ''} for transactions\n`)
+
+  const gasConfig = getGasConfig(hardhatNetwork.name)
+
   // Step 1: Deploy JuiceSwapGovernor
   console.log('📝 Step 1: Deploying JuiceSwapGovernor...')
 
   const JuiceSwapGovernorFactory = await ethers.getContractFactory('JuiceSwapGovernor')
-
   const governor = await JuiceSwapGovernorFactory.deploy(
     JUSD_ADDRESS,
     JUICE_ADDRESS,
     {
-      gasLimit: 2000000
+      gasLimit: 2000000,
+      maxFeePerGas: ethers.parseUnits(gasConfig.maxFeePerGas, 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits(gasConfig.maxPriorityFeePerGas, 'gwei')
     }
   )
   await governor.waitForDeployment()
+  await governor.deploymentTransaction()?.wait(confirmations)
 
   const governorAddress = await governor.getAddress()
   console.log('✅ JuiceSwapGovernor deployed at:', governorAddress)
@@ -87,10 +127,13 @@ async function main() {
     FACTORY_ADDRESS,
     governorAddress,  // Governor owns FeeCollector
     {
-      gasLimit: 3000000
+      gasLimit: 3000000,
+      maxFeePerGas: ethers.parseUnits(gasConfig.maxFeePerGas, 'gwei'),
+      maxPriorityFeePerGas: ethers.parseUnits(gasConfig.maxPriorityFeePerGas, 'gwei')
     }
   )
   await feeCollector.waitForDeployment()
+  await feeCollector.deploymentTransaction()?.wait(confirmations)
 
   const feeCollectorAddress = await feeCollector.getAddress()
   console.log('✅ JuiceSwapFeeCollector deployed at:', feeCollectorAddress)
@@ -104,8 +147,14 @@ async function main() {
     'function owner() view returns (address)',
     'function setOwner(address _owner)'
   ]
+  
+  const factoryCode = await provider.getCode(FACTORY_ADDRESS)
+  if (factoryCode === '0x') {
+    console.log('❌ No contract at Factory address. Deploy DEX first or use persistent hardhat node.')
+    process.exit(1)
+  }
+  
   const factoryContract = new ethers.Contract(FACTORY_ADDRESS, factoryABI, deployer)
-
   const currentFactoryOwner = await factoryContract.owner()
   console.log('   Current Factory Owner:', currentFactoryOwner)
 
@@ -113,8 +162,15 @@ async function main() {
     console.log('⚠️  Warning: Deployer is not Factory owner!')
     console.log('   You need to run this script with the current owner\'s private key\n')
   } else {
-    const setOwnerTx = await factoryContract.setOwner(governorAddress, { gasLimit: 200000 })
-    await setOwnerTx.wait()
+    const setOwnerTx = await factoryContract.setOwner(
+      governorAddress,
+      {
+        gasLimit: 200000,
+        maxFeePerGas: ethers.parseUnits(gasConfig.maxFeePerGas, 'gwei'),
+        maxPriorityFeePerGas: ethers.parseUnits(gasConfig.maxPriorityFeePerGas, 'gwei')
+      }
+    )
+    await setOwnerTx.wait(confirmations)
     console.log('✅ Factory ownership transferred to Governor')
     console.log('   Tx Hash:', setOwnerTx.hash)
     console.log('')
@@ -136,8 +192,15 @@ async function main() {
     console.log('⚠️  Warning: Deployer is not ProxyAdmin owner!')
     console.log('   You need to run this script with the current owner\'s private key\n')
   } else {
-    const transferOwnershipTx = await proxyAdmin.transferOwnership(governorAddress, { gasLimit: 200000 })
-    await transferOwnershipTx.wait()
+    const transferOwnershipTx = await proxyAdmin.transferOwnership(
+      governorAddress,
+      {
+        gasLimit: 200000,
+        maxFeePerGas: ethers.parseUnits(gasConfig.maxFeePerGas, 'gwei'),
+        maxPriorityFeePerGas: ethers.parseUnits(gasConfig.maxPriorityFeePerGas, 'gwei')
+      }
+    )
+    await transferOwnershipTx.wait(confirmations)
     console.log('✅ ProxyAdmin ownership transferred to Governor')
     console.log('   Tx Hash:', transferOwnershipTx.hash)
     console.log('')
@@ -162,7 +225,6 @@ async function main() {
     console.log('⚠️  Warning: Ownership transfer incomplete!')
   }
 
-  // Save governance deployment info using standard schema
   const blockNumber = await ethers.provider.getBlockNumber()
   const governanceState = {
     schemaVersion: '1.0',
@@ -200,7 +262,6 @@ async function main() {
     }
   }
 
-  // Save to deployments directory
   const deployDir = path.join(__dirname, '../deployments', deploymentFolder)
   fs.mkdirSync(deployDir, { recursive: true })
   const governanceFile = path.join(deployDir, 'governance.json')

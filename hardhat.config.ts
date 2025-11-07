@@ -1,5 +1,6 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
+import "@nomicfoundation/hardhat-verify";
 import "hardhat-dependency-compiler";
 import "dotenv/config";
 import { task } from "hardhat/config";
@@ -49,6 +50,9 @@ const config: HardhatUserConfig = {
       },
     ],
   },
+  sourcify: {
+    enabled: true,
+  },
   networks: {
     hardhat: {
       forking: process.env.FORK_CITREA === "true" ? {
@@ -66,6 +70,7 @@ const config: HardhatUserConfig = {
       url: process.env.CITREA_RPC_URL || "https://rpc.testnet.citrea.xyz",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
       chainId: 5115,
+      timeout: 300_000,
     },
   },
   paths: {
