@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "1.0",
+  "network": {
+    "name": "Citrea Testnet",
+    "chainId": 5115
+  },
+  "deployment": {
+    "deployedAt": "2025-11-08T02:03:38.089Z",
+    "deployedBy": "0xE399782Fe2B0aBb138926b14261F49473b4881A3",
+    "blockNumber": 17882977
+  },
+  "contracts": {
+    "JuiceSwapGovernor": {
+      "address": "0x2F533f8296441440D38DD9e19B70923acC611A5D",
+      "deploymentTx": "0x742d9981199f1dd83e3a81343043b03a36c67f857dbaf089503bc5fe54a0a887",
+      "constructorArgs": [
+        "0x1Dd3057888944ff1f914626aB4BD47Dc8b6285Fe",
+        "0xD82010E94737A4E4C3fc26314326Ff606E2Dcdf4"
+      ]
+    },
+    "JuiceSwapFeeCollector": {
+      "address": "0xAdDd2A976E9e9f5cd50A9023A540D9f9F51f47eF",
+      "deploymentTx": "0xedba232fce270be766701a89ac2b6ca9b4a9378b1d97a68c0345f25f1e7f2789",
+      "constructorArgs": [
+        "0x1Dd3057888944ff1f914626aB4BD47Dc8b6285Fe",
+        "0xD82010E94737A4E4C3fc26314326Ff606E2Dcdf4",
+        "0x5cacB7a81694E534e6EB03eB4598791f84E2a902",
+        "0x3Ff0EE03E31DcB74c00bCf79558905cC2cf1459B",
+        "0x2F533f8296441440D38DD9e19B70923acC611A5D"
+      ]
+    }
+  },
+  "references": {
+    "jusdAddress": "0x1Dd3057888944ff1f914626aB4BD47Dc8b6285Fe",
+    "juiceAddress": "0xD82010E94737A4E4C3fc26314326Ff606E2Dcdf4",
+    "factoryAddress": "0x3Ff0EE03E31DcB74c00bCf79558905cC2cf1459B",
+    "proxyAdminAddress": "0x4e20Ec7daaaeA8B135bf825556Bd70C062D0ee09",
+    "swapRouterAddress": "0x5cacB7a81694E534e6EB03eB4598791f84E2a902"
+  },
+  "metadata": {
+    "deployer": "JuiceSwapXyz/smart-contracts",
+    "scriptVersion": "1.0.0"
+  }
+}
