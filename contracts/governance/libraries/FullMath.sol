@@ -9,7 +9,7 @@ pragma solidity ^0.8.0;
 /// DEVIATIONS FROM AUDITED SOURCE:
 /// - Source: Uniswap/v3-core/contracts/libraries/FullMath.sol
 /// - Pragma upgraded from ">=0.4.0 <0.8.0" to "^0.8.0"
-/// - Line 66-68: Added unchecked{} block for intentional underflow (required for Solidity 0.8.x)
+/// - Line 71-73: Added unchecked{} block for intentional underflow (required for Solidity 0.8.x)
 library FullMath {
     /// @notice Calculates floor(a×b÷denominator) with full precision. Throws if result overflows a uint256 or denominator == 0
     /// @param a The multiplicand
