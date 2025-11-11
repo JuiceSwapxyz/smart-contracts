@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
+// Modified from Uniswap V3 Core v1.0.0
+// Source: https://github.com/Uniswap/v3-core/blob/e3589b192d0be27e100cd0daaf6c97204fdb1899/contracts/libraries/TickMath.sol
+// Commit: https://github.com/Uniswap/v3-core/commit/e3589b192d0be27e100cd0daaf6c97204fdb1899
+// Changes:
+//   1. Pragma upgraded to ^0.8.0 (from >=0.5.0 <0.8.0)
+//   2. Line 31: Explicit cast uint256(int256(MAX_TICK)) required for 0.8.x
+// All other code unchanged from Uniswap v1.0.0
+
 /// @title Math library for computing sqrt prices from ticks
 /// @notice Computes sqrt price for ticks of size 1.0001, i.e. sqrt(1.0001^tick) as fixed point Q64.96 numbers. Supports
 /// prices between 2**-128 and 2**128
-/// @dev Adapted from Uniswap V3 TickMath for Solidity 0.8.x
-///
-/// DEVIATIONS FROM AUDITED SOURCE:
-/// - Source: Uniswap/v3-core/contracts/libraries/TickMath.sol
-/// - Pragma upgraded from ">=0.4.0 <0.8.0" to "^0.8.0" (original explicitly excluded 0.8.x)
-/// - Contains complex mathematical operations; thoroughly tested for 0.8.x compatibility
 library TickMath {
     /// @dev The minimum tick that may be passed to #getSqrtRatioAtTick computed from log base 1.0001 of 2**-128
     int24 internal constant MIN_TICK = -887272;
@@ -28,6 +30,7 @@ library TickMath {
     /// at the given tick
     function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
         uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
+        /// @dev JuiceSwap modification: Explicit cast required for 0.8.x (int24→int256→uint256)
         require(absTick <= uint256(int256(MAX_TICK)), "T");
 
         uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;

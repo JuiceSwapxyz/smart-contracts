@@ -5,16 +5,22 @@ import "./FullMath.sol";
 import "./TickMath.sol";
 import "../interfaces/IUniswapV3Pool.sol";
 
+// Modified from Uniswap V3 Periphery v1.3.0 - PARTIAL IMPLEMENTATION
+// Source: https://github.com/Uniswap/v3-periphery/blob/80f26c86c57b8a5e4b913f42844d4c8bd274d058/contracts/libraries/OracleLibrary.sol
+// Commit: https://github.com/Uniswap/v3-periphery/commit/80f26c86c57b8a5e4b913f42844d4c8bd274d058
+//
+// Note: Partial implementation - only 2 of 5 functions included (from v1.3.0)
+// Included: consult(), getQuoteAtTick()
+// Omitted: getOldestObservationSecondsAgo(), getBlockStartingTickAndLiquidity(), getWeightedArithmeticMeanTick()
+//
+// Changes:
+//   1. Pragma upgraded to ^0.8.0 (from >=0.5.0 <0.8.0)
+//   2. Import paths use local 0.8.x-compatible copies
+//   3. Lines 42, 44: Explicit type casts for int56/uint32 operations (required for 0.8.x)
+// Included code unchanged in logic from Uniswap v1.3.0
+
 /// @title Oracle library
 /// @notice Provides functions to integrate with V3 pool oracle
-/// @dev Adapted from Uniswap V3 OracleLibrary for Solidity 0.8.x
-///
-/// DEVIATIONS FROM AUDITED SOURCE:
-/// - Source: Uniswap/v3-periphery/contracts/libraries/OracleLibrary.sol
-/// - Pragma upgraded from ">=0.5.0 <0.8.0" to "^0.8.0"
-/// - PARTIAL IMPLEMENTATION: Only includes consult() and getQuoteAtTick()
-/// - Omitted: getOldestObservationSecondsAgo, getBlockStartingTickAndLiquidity,
-///   getWeightedArithmeticMeanTick, getChainedPrice, and WeightedTickData struct
 library OracleLibrary {
     /// @notice Calculates time-weighted means of tick and liquidity for a given Uniswap V3 pool
     /// @param pool Address of the pool that we want to observe
@@ -39,6 +45,7 @@ library OracleLibrary {
         uint160 secondsPerLiquidityCumulativesDelta =
             secondsPerLiquidityCumulativeX128s[1] - secondsPerLiquidityCumulativeX128s[0];
 
+        /// @dev JuiceSwap modification: Explicit casts required for 0.8.x (int56÷uint32 → int56÷int56)
         arithmeticMeanTick = int24(tickCumulativesDelta / int56(uint56(secondsAgo)));
         // Always round to negative infinity
         if (tickCumulativesDelta < 0 && (tickCumulativesDelta % int56(uint56(secondsAgo)) != 0)) arithmeticMeanTick--;

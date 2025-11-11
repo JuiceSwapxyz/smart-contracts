@@ -3,11 +3,14 @@ pragma solidity ^0.8.0;
 
 import './BytesLib.sol';
 
+// Modified from Uniswap V3 Periphery v1.3.0
+// Source: https://github.com/Uniswap/v3-periphery/blob/80f26c86c57b8a5e4b913f42844d4c8bd274d058/contracts/libraries/Path.sol
+// Commit: https://github.com/Uniswap/v3-periphery/commit/80f26c86c57b8a5e4b913f42844d4c8bd274d058
+// Changes:
+//   1. Pragma upgraded to ^0.8.0 (from >=0.6.0)
+// All other code unchanged from Uniswap v1.3.0
+
 /// @title Functions for manipulating path data for multihop swaps
-///
-/// DEVIATIONS FROM AUDITED SOURCE:
-/// - Source: Uniswap/v3-periphery/contracts/libraries/Path.sol
-/// - Pragma upgraded from ">=0.6.0" to "^0.8.0"
 library Path {
     using BytesLib for bytes;
 
