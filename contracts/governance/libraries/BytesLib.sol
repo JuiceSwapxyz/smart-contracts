@@ -5,12 +5,15 @@
  *
  * @dev Bytes tightly packed arrays utility library for ethereum contracts written in Solidity.
  *      The library lets you concatenate, slice and type cast bytes arrays both in memory and storage.
- *
- * DEVIATIONS FROM AUDITED SOURCE:
- * - Source: Uniswap/v3-periphery/contracts/libraries/BytesLib.sol
- * - Pragma upgraded from ">=0.5.0 <0.8.0" to "^0.8.0"
  */
 pragma solidity ^0.8.0;
+
+// Modified from Uniswap V3 Periphery
+// Source: https://github.com/Uniswap/v3-periphery/blob/0682387198a24c7cd63566a2c58398533860a5d1/contracts/libraries/BytesLib.sol
+// Commit: https://github.com/Uniswap/v3-periphery/commit/0682387198a24c7cd63566a2c58398533860a5d1
+// Changes:
+//   1. Pragma upgraded to ^0.8.0 (from >=0.5.0 <0.8.0)
+// All other code unchanged from Uniswap commit 0682387
 
 library BytesLib {
     function slice(
