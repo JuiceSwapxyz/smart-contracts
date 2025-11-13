@@ -4,7 +4,7 @@
   "description": "JuiceSwap Smart Contracts",
   "scripts": {
     "compile": "hardhat compile",
-    "prepare": "hardhat compile",
+    "prepare": "yarn install && yarn compile",
     "test": "hardhat test",
     "test:nft": "hardhat test test/FirstSqueezerNFT.test.ts",
     "test:gov": "hardhat test test/JuiceSwap*.test.ts",
