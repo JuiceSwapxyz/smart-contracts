@@ -8,12 +8,12 @@
  */
 pragma solidity ^0.8.0;
 
-// Modified from Uniswap V3 Periphery v1.3.0
-// Source: https://github.com/Uniswap/v3-periphery/blob/80f26c86c57b8a5e4b913f42844d4c8bd274d058/contracts/libraries/BytesLib.sol
-// Commit: https://github.com/Uniswap/v3-periphery/commit/80f26c86c57b8a5e4b913f42844d4c8bd274d058
+// Modified from Uniswap V3 Periphery
+// Source: https://github.com/Uniswap/v3-periphery/blob/0682387198a24c7cd63566a2c58398533860a5d1/contracts/libraries/BytesLib.sol
+// Commit: https://github.com/Uniswap/v3-periphery/commit/0682387198a24c7cd63566a2c58398533860a5d1
 // Changes:
 //   1. Pragma upgraded to ^0.8.0 (from >=0.5.0 <0.8.0)
-// All other code unchanged from Uniswap v1.3.0
+// All other code unchanged from Uniswap commit 0682387
 
 library BytesLib {
     function slice(

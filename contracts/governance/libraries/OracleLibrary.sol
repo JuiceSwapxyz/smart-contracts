@@ -5,19 +5,19 @@ import "./FullMath.sol";
 import "./TickMath.sol";
 import "../interfaces/IUniswapV3Pool.sol";
 
-// Modified from Uniswap V3 Periphery v1.3.0 - PARTIAL IMPLEMENTATION
-// Source: https://github.com/Uniswap/v3-periphery/blob/80f26c86c57b8a5e4b913f42844d4c8bd274d058/contracts/libraries/OracleLibrary.sol
-// Commit: https://github.com/Uniswap/v3-periphery/commit/80f26c86c57b8a5e4b913f42844d4c8bd274d058
+// Modified from Uniswap V3 Periphery - PARTIAL IMPLEMENTATION
+// Source: https://github.com/Uniswap/v3-periphery/blob/0682387198a24c7cd63566a2c58398533860a5d1/contracts/libraries/OracleLibrary.sol
+// Commit: https://github.com/Uniswap/v3-periphery/commit/0682387198a24c7cd63566a2c58398533860a5d1
 //
-// Note: Partial implementation - only 2 of 5 functions included (from v1.3.0)
+// Note: Partial implementation - only 2 of 6 functions included
 // Included: consult(), getQuoteAtTick()
-// Omitted: getOldestObservationSecondsAgo(), getBlockStartingTickAndLiquidity(), getWeightedArithmeticMeanTick()
+// Omitted: getOldestObservationSecondsAgo(), getBlockStartingTickAndLiquidity(), getWeightedArithmeticMeanTick(), getChainedPrice()
 //
 // Changes:
 //   1. Pragma upgraded to ^0.8.0 (from >=0.5.0 <0.8.0)
 //   2. Import paths use local 0.8.x-compatible copies
-//   3. Lines 42, 44: Explicit type casts for int56/uint32 operations (required for 0.8.x)
-// Included code unchanged in logic from Uniswap v1.3.0
+//   3. Lines 49, 51: Explicit type casts for int56/uint32 operations (required for 0.8.x)
+// Included code unchanged in logic from Uniswap commit 0682387
 
 /// @title Oracle library
 /// @notice Provides functions to integrate with V3 pool oracle
