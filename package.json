@@ -4,6 +4,7 @@
   "description": "JuiceSwap Smart Contracts",
   "scripts": {
     "compile": "hardhat compile",
+    "prepare": "hardhat compile",
     "test": "hardhat test",
     "test:nft": "hardhat test test/FirstSqueezerNFT.test.ts",
     "test:gov": "hardhat test test/JuiceSwap*.test.ts",
@@ -12,10 +13,7 @@
     "verify:gov:testnet": "DEPLOYMENT_FILE_PATH=./deployments/testnet/governance.json npx hardhat run scripts/verifyContracts.ts --network citreaTestnet"
   },
   "dependencies": {
-    "@juicedollar/jusd": "git+https://github.com/JuiceDollar/smartContracts.git#develop",
-    "@openzeppelin/contracts": "^5.1.0",
-    "@uniswap/v3-core": "^1.0.1",
-    "@uniswap/v3-periphery": "^1.4.4"
+    "@openzeppelin/contracts": "^5.1.0"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
@@ -28,6 +26,9 @@
     "@types/chai": "^4.3.0",
     "@types/mocha": "^10.0.0",
     "@types/node": "^20.10.5",
+    "@juicedollar/jusd": "git+https://github.com/JuiceDollar/smartContracts.git#develop",
+    "@uniswap/v3-core": "1.0.1",
+    "@uniswap/v3-periphery": "1.4.4",
     "axios": "^1.6.2",
     "chai": "^4.3.0",
     "dotenv": "^16.3.1",

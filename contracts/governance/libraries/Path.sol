@@ -3,11 +3,14 @@ pragma solidity ^0.8.0;
 
 import './BytesLib.sol';
 
+// Modified from Uniswap V3 Periphery v1.4.4
+// Source: https://github.com/Uniswap/v3-periphery/blob/697c2474757ea89fec12a4e6db16a574fe259610/contracts/libraries/Path.sol
+// Commit: https://github.com/Uniswap/v3-periphery/commit/697c2474757ea89fec12a4e6db16a574fe259610
+// Changes:
+//   1. Pragma upgraded to ^0.8.0 (from >=0.6.0)
+// All other code unchanged from Uniswap v1.4.4
+
 /// @title Functions for manipulating path data for multihop swaps
-///
-/// DEVIATIONS FROM AUDITED SOURCE:
-/// - Source: Uniswap/v3-periphery/contracts/libraries/Path.sol
-/// - Pragma upgraded from ">=0.6.0" to "^0.8.0"
 library Path {
     using BytesLib for bytes;
 
@@ -34,7 +37,7 @@ library Path {
     /// @param path The encoded swap path
     /// @return The number of pools in the path
     function numPools(bytes memory path) internal pure returns (uint256) {
-        // ((path.length - ADDR_SIZE) / NEXT_OFFSET) gives number of hops
+        // Ignore the first token address. From then on every fee and token offset indicates a pool.
         return ((path.length - ADDR_SIZE) / NEXT_OFFSET);
     }
 
