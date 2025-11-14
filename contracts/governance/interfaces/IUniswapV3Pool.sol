@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-// Minimal interface derived from Uniswap V3 Core v1.0.0
-// Source: https://github.com/Uniswap/v3-core/blob/e3589b192d0be27e100cd0daaf6c97204fdb1899/contracts/interfaces/IUniswapV3Pool.sol
-// Commit: https://github.com/Uniswap/v3-core/commit/e3589b192d0be27e100cd0daaf6c97204fdb1899
+// Minimal interface derived from Uniswap V3 Core v1.0.1
+// Source: https://github.com/Uniswap/v3-core/blob/ed88be38ab2032d82bf10ac6f8d03aa631889d48/contracts/interfaces/IUniswapV3Pool.sol
+// Commit: https://github.com/Uniswap/v3-core/commit/ed88be38ab2032d82bf10ac6f8d03aa631889d48
 // Note: Includes only functions needed by JuiceSwap governance (FeeCollector + OracleLibrary)
 
 /**

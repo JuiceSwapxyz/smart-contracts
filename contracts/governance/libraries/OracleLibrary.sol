@@ -5,9 +5,9 @@ import "./FullMath.sol";
 import "./TickMath.sol";
 import "../interfaces/IUniswapV3Pool.sol";
 
-// Modified from Uniswap V3 Periphery - PARTIAL IMPLEMENTATION
-// Source: https://github.com/Uniswap/v3-periphery/blob/0682387198a24c7cd63566a2c58398533860a5d1/contracts/libraries/OracleLibrary.sol
-// Commit: https://github.com/Uniswap/v3-periphery/commit/0682387198a24c7cd63566a2c58398533860a5d1
+// Modified from Uniswap V3 Periphery v1.4.4 - PARTIAL IMPLEMENTATION
+// Source: https://github.com/Uniswap/v3-periphery/blob/697c2474757ea89fec12a4e6db16a574fe259610/contracts/libraries/OracleLibrary.sol
+// Commit: https://github.com/Uniswap/v3-periphery/commit/697c2474757ea89fec12a4e6db16a574fe259610
 //
 // Note: Partial implementation - only 2 of 6 functions included
 // Included: consult(), getQuoteAtTick()
@@ -17,7 +17,7 @@ import "../interfaces/IUniswapV3Pool.sol";
 //   1. Pragma upgraded to ^0.8.0 (from >=0.5.0 <0.8.0)
 //   2. Import paths use local 0.8.x-compatible copies
 //   3. Lines 49, 51: Explicit type casts for int56/uint32 operations (required for 0.8.x)
-// Included code unchanged in logic from Uniswap commit 0682387
+// Included code unchanged in logic from Uniswap v1.4.4
 
 /// @title Oracle library
 /// @notice Provides functions to integrate with V3 pool oracle
@@ -32,7 +32,7 @@ library OracleLibrary {
         view
         returns (int24 arithmeticMeanTick, uint128 harmonicMeanLiquidity)
     {
-        require(secondsAgo != 0, "BP");
+        require(secondsAgo != 0, 'BP');
 
         uint32[] memory secondsAgos = new uint32[](2);
         secondsAgos[0] = secondsAgo;
