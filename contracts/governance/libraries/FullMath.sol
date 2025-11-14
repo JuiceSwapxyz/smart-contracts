@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-// Modified from Uniswap V3 Core v1.0.0
-// Source: https://github.com/Uniswap/v3-core/blob/e3589b192d0be27e100cd0daaf6c97204fdb1899/contracts/libraries/FullMath.sol
-// Commit: https://github.com/Uniswap/v3-core/commit/e3589b192d0be27e100cd0daaf6c97204fdb1899
+// Modified from Uniswap V3 Core v1.0.1
+// Source: https://github.com/Uniswap/v3-core/blob/ed88be38ab2032d82bf10ac6f8d03aa631889d48/contracts/libraries/FullMath.sol
+// Commit: https://github.com/Uniswap/v3-core/commit/ed88be38ab2032d82bf10ac6f8d03aa631889d48
 // Changes:
 //   1. Pragma upgraded to ^0.8.0 (from >=0.4.0 <0.8.0)
-//   2. Lines 71-73: Added unchecked{} for intentional underflow (required for 0.8.x)
-// All other code unchanged from Uniswap v1.0.0
+//   2. Lines 72-75: Refactored to use unchecked block with explicit (0 - denominator) syntax (required for 0.8.x)
+// All other code unchanged from Uniswap v1.0.1
 
 /// @title Contains 512-bit math functions
 /// @notice Facilitates multiplication and division that can have overflow of an intermediate value without any loss of precision
@@ -70,7 +70,6 @@ library FullMath {
         // Compute largest power of two divisor of denominator.
         // Always >= 1.
         uint256 twos;
-        /// @dev JuiceSwap modification: unchecked block required for 0.8.x (intentional underflow is safe)
         unchecked {
             twos = (0 - denominator) & denominator;
         }
