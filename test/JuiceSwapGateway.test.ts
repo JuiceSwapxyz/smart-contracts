@@ -443,12 +443,15 @@ describe("JuiceSwapGateway", function () {
       const jusdAmount = ethers.parseEther("100");
       const wcbtcAmount = ethers.parseEther("1");
 
+      // Calculate actual svJUSD shares that will be received when depositing JUSD
+      const svJusdShares = await svJusd.convertToShares(jusdAmount);
+
       // Setup mock position manager with correct token order (token0 < token1)
       const svJusdAddr = await svJusd.getAddress();
       const wcbtcAddr = await wcbtc.getAddress();
       const [amount0, amount1] = svJusdAddr < wcbtcAddr
-        ? [jusdAmount, wcbtcAmount]  // svJUSD is token0
-        : [wcbtcAmount, jusdAmount]; // WcBTC is token0
+        ? [svJusdShares, wcbtcAmount]  // svJUSD is token0
+        : [wcbtcAmount, svJusdShares]; // WcBTC is token0
       await positionManager.setMintResult(1, 100, amount0, amount1);
 
       await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
@@ -476,12 +479,15 @@ describe("JuiceSwapGateway", function () {
       const jusdAmount = ethers.parseEther("100");
       const wcbtcAmount = ethers.parseEther("1");
 
+      // Calculate actual svJUSD shares
+      const svJusdShares = await svJusd.convertToShares(jusdAmount);
+
       // Setup with correct token order
       const svJusdAddr = await svJusd.getAddress();
       const wcbtcAddr = await wcbtc.getAddress();
       const [amount0, amount1] = svJusdAddr < wcbtcAddr
-        ? [jusdAmount, wcbtcAmount]
-        : [wcbtcAmount, jusdAmount];
+        ? [svJusdShares, wcbtcAmount]
+        : [wcbtcAmount, svJusdShares];
       await positionManager.setMintResult(1, 100, amount0, amount1);
 
       await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
@@ -509,12 +515,15 @@ describe("JuiceSwapGateway", function () {
       const jusdAmount = ethers.parseEther("100");
       const cbtcAmount = ethers.parseEther("1");
 
+      // Calculate actual svJUSD shares
+      const svJusdShares = await svJusd.convertToShares(jusdAmount);
+
       // Setup with correct token order (native becomes WcBTC)
       const svJusdAddr = await svJusd.getAddress();
       const wcbtcAddr = await wcbtc.getAddress();
       const [amount0, amount1] = svJusdAddr < wcbtcAddr
-        ? [jusdAmount, cbtcAmount]
-        : [cbtcAmount, jusdAmount];
+        ? [svJusdShares, cbtcAmount]
+        : [cbtcAmount, svJusdShares];
       await positionManager.setMintResult(1, 100, amount0, amount1);
 
       await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
@@ -542,12 +551,15 @@ describe("JuiceSwapGateway", function () {
       const jusdAmount = ethers.parseEther("100");
       const wcbtcAmount = ethers.parseEther("1");
 
+      // Calculate actual svJUSD shares
+      const svJusdShares = await svJusd.convertToShares(jusdAmount);
+
       // Setup with correct token order - mock returns less than desired
       const svJusdAddr = await svJusd.getAddress();
       const wcbtcAddr = await wcbtc.getAddress();
       const [amount0, amount1] = svJusdAddr < wcbtcAddr
-        ? [jusdAmount / 2n, wcbtcAmount / 2n]  // Only half used
-        : [wcbtcAmount / 2n, jusdAmount / 2n];
+        ? [svJusdShares / 2n, wcbtcAmount / 2n]  // Only half used
+        : [wcbtcAmount / 2n, svJusdShares / 2n];
       await positionManager.setMintResult(1, 100, amount0, amount1);
 
       await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
