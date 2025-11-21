@@ -16,7 +16,7 @@
     "@openzeppelin/contracts": "^5.1.0"
   },
   "devDependencies": {
-    "@juicedollar/jusd": "git+https://github.com/JuiceDollar/smartContracts.git#develop",
+    "@juicedollar/jusd": "^1.0.1",
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
     "@nomicfoundation/hardhat-ethers": "^3.0.5",
     "@nomicfoundation/hardhat-network-helpers": "^1.0.0",

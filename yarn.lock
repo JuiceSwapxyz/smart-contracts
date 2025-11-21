@@ -430,7 +430,7 @@
     "@jridgewell/resolve-uri" "^3.0.3"
     "@jridgewell/sourcemap-codec" "^1.4.10"
 
-"@juicedollar/jusd@git+https://github.com/JuiceDollar/smartContracts.git#develop":
+"@juicedollar/jusd@^1.0.1":
   version "1.0.1"
   resolved "git+ssh://git@github.com/JuiceDollar/smartContracts.git#64c191f46d54a3b45645625f64375d6d1515cf37"
   dependencies:
