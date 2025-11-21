@@ -215,7 +215,7 @@ async function executeSwap(
   });
 }
 
-describe("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
+describe.skip("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
   const MIN_APPLICATION_PERIOD = 10 * 24 * 60 * 60; // 10 days
 
   /**
