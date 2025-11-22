@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {IJuiceSwapGateway} from "./interfaces/IJuiceSwapGateway.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -46,7 +47,12 @@ interface ISwapRouter {
     function exactInput(ExactInputParams calldata params) external payable returns (uint256 amountOut);
 }
 
+interface IUniswapV3Factory {
+    function feeAmountTickSpacing(uint24 fee) external view returns (int24);
+}
+
 interface INonfungiblePositionManager {
+    function factory() external view returns (address);
     struct MintParams {
         address token0;
         address token1;
@@ -143,6 +149,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     IWrappedCBTC public immutable WCBTC;
     ISwapRouter public immutable SWAP_ROUTER;
     INonfungiblePositionManager public immutable POSITION_MANAGER;
+    IUniswapV3Factory public immutable FACTORY;
 
     address private constant NATIVE_TOKEN = address(0);
     uint24 public defaultFee = 3000; // 0.3% default fee tier
@@ -153,6 +160,9 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     error TransferFailed();
     error DeadlineExpired();
     error DirectTransferNotAccepted();
+    error JuiceInputNotSupported();
+    error NotNFTOwner(address caller, address owner);
+    error InvalidFee(uint24 fee);
 
     event TokenRescued(address indexed token, address indexed to, uint256 amount);
     event NativeRescued(address indexed to, uint256 amount);
@@ -181,6 +191,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         WCBTC = IWrappedCBTC(_wcbtc);
         SWAP_ROUTER = ISwapRouter(_swapRouter);
         POSITION_MANAGER = INonfungiblePositionManager(_positionManager);
+        FACTORY = IUniswapV3Factory(INonfungiblePositionManager(_positionManager).factory());
 
         // Pre-approve tokens for efficiency
         JUSD.approve(address(SV_JUSD), type(uint256).max);
@@ -198,6 +209,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     function swapExactTokensForTokens(
         address tokenIn,
         address tokenOut,
+        uint24 fee,
         uint256 amountIn,
         uint256 minAmountOut,
         address to,
@@ -205,6 +217,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     ) external payable nonReentrant whenNotPaused returns (uint256 amountOut) {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (amountIn == 0) revert InvalidAmount();
+        if (fee >= 1_000_000) revert InvalidFee(fee);
 
         // Step 1: Handle input token conversion
         (address actualTokenIn, uint256 actualAmountIn) = _handleTokenIn(tokenIn, amountIn);
@@ -216,11 +229,11 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
             tokenIn: actualTokenIn,
             tokenOut: actualTokenOut,
-            fee: defaultFee,
+            fee: fee,
             recipient: address(this),
             deadline: deadline,
             amountIn: actualAmountIn,
-            amountOutMinimum: 0, // We check slippage after conversion
+            amountOutMinimum: 0, // Slippage checked after conversions
             sqrtPriceLimitX96: 0
         });
 
@@ -242,6 +255,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     function addLiquidity(
         address tokenA,
         address tokenB,
+        uint24 fee,
         uint256 amountADesired,
         uint256 amountBDesired,
         uint256 amountAMin,
@@ -270,13 +284,14 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
                 ? (actualAmountAMin, actualAmountBMin)
                 : (actualAmountBMin, actualAmountAMin);
 
-        // Create full-range position (tick -887220 to 887220 for most pools)
+        (int24 tickLower, int24 tickUpper) = _getFullRangeTicks(fee);
+
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
             token0: token0,
             token1: token1,
-            fee: defaultFee,
-            tickLower: -887220, // Full range lower
-            tickUpper: 887220,  // Full range upper
+            fee: fee,
+            tickLower: tickLower,
+            tickUpper: tickUpper,
             amount0Desired: amount0Desired,
             amount1Desired: amount1Desired,
             amount0Min: amount0Min,
@@ -285,7 +300,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
             deadline: deadline
         });
 
-        (uint256 tokenId, uint128 liquidityAmount, uint256 amount0, uint256 amount1) = POSITION_MANAGER.mint(params);
+        (uint256 tokenId, , uint256 amount0, uint256 amount1) = POSITION_MANAGER.mint(params);
 
         // Map back to A/B order
         (amountA, amountB) = actualTokenA < actualTokenB ? (amount0, amount1) : (amount1, amount0);
@@ -302,7 +317,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         _returnExcess(tokenA, actualTokenA, excessA, msg.sender);
         _returnExcess(tokenB, actualTokenB, excessB, msg.sender);
 
-        emit LiquidityAdded(msg.sender, tokenA, tokenB, amountA, amountB, liquidity);
+        emit LiquidityAdded(msg.sender, tokenA, tokenB, amountA, amountB, tokenId);
         return (amountA, amountB, liquidity);
     }
 
@@ -322,6 +337,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         if (block.timestamp > deadline) revert DeadlineExpired();
 
         uint256 tokenId = liquidity;
+
+        // Verify NFT ownership to prevent theft
+        address nftOwner = IERC721(address(POSITION_MANAGER)).ownerOf(tokenId);
+        if (nftOwner != msg.sender) revert NotNFTOwner(msg.sender, nftOwner);
 
         // Get position info to determine liquidity amount
         (,,,,,,, uint128 liquidityAmount,,,,) = POSITION_MANAGER.positions(tokenId);
@@ -372,7 +391,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         amountA = _handleTokenOut(tokenA, actualAmountA, to);
         amountB = _handleTokenOut(tokenB, actualAmountB, to);
 
-        emit LiquidityRemoved(msg.sender, tokenA, tokenB, amountA, amountB, liquidity);
+        // Return NFT to user
+        IERC721(address(POSITION_MANAGER)).safeTransferFrom(address(this), msg.sender, tokenId);
+
+        emit LiquidityRemoved(msg.sender, tokenA, tokenB, amountA, amountB, tokenId);
         return (amountA, amountB);
     }
 
@@ -411,20 +433,17 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
             uint256 shares = SV_JUSD.deposit(amount, address(this));
             return (address(SV_JUSD), shares);
         } else if (token == address(JUICE)) {
-            // JUICE → JUSD → svJUSD
-            JUICE.transferFrom(msg.sender, address(this), amount);
-            uint256 jusdAmount = JUICE.redeem(address(this), amount);
-            uint256 shares = SV_JUSD.deposit(jusdAmount, address(this));
-            return (address(SV_JUSD), shares);
+            // JUICE cannot be used as input due to Equity flash loan protection.
+            // Users must redeem JUICE directly: JUICE.redeem() → then swap the JUSD.
+            revert JuiceInputNotSupported();
         } else {
             // Other tokens - direct transfer
             IERC20(token).transferFrom(msg.sender, address(this), amount);
-            // Approve max for gas efficiency (only approve once per token)
             if (IERC20(token).allowance(address(this), address(SWAP_ROUTER)) < amount) {
-                IERC20(token).approve(address(SWAP_ROUTER), type(uint256).max);
+                SafeERC20.forceApprove(IERC20(token), address(SWAP_ROUTER), type(uint256).max);
             }
             if (IERC20(token).allowance(address(this), address(POSITION_MANAGER)) < amount) {
-                IERC20(token).approve(address(POSITION_MANAGER), type(uint256).max);
+                SafeERC20.forceApprove(IERC20(token), address(POSITION_MANAGER), type(uint256).max);
             }
             return (token, amount);
         }
@@ -482,6 +501,22 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     }
 
     /**
+     * @dev Calculates full-range ticks for a given fee tier
+     */
+    function _getFullRangeTicks(uint24 fee) internal view returns (int24 tickLower, int24 tickUpper) {
+        int24 tickSpacing = FACTORY.feeAmountTickSpacing(fee);
+        if (tickSpacing == 0) revert InvalidFee(fee);
+
+        int24 MIN_TICK = -887272;
+        int24 MAX_TICK = 887272;
+
+        tickLower = (MIN_TICK / tickSpacing) * tickSpacing;
+        tickUpper = (MAX_TICK / tickSpacing) * tickSpacing;
+
+        return (tickLower, tickUpper);
+    }
+
+    /**
      * @dev Returns excess tokens to user after adding liquidity
      */
     function _returnExcess(address userToken, address actualToken, uint256 excessAmount, address to) internal {
@@ -508,6 +543,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
      * @param newFee The new fee tier (500 = 0.05%, 3000 = 0.3%, 10000 = 1%)
      */
     function setDefaultFee(uint24 newFee) external onlyOwner {
+        if (newFee >= 1_000_000) revert InvalidFee(newFee);
         uint24 oldFee = defaultFee;
         defaultFee = newFee;
         emit DefaultFeeUpdated(oldFee, newFee);

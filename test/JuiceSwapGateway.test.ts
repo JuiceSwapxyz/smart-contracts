@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { ethers } from "hardhat";
 import { JuiceSwapGateway } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
@@ -218,13 +219,22 @@ describe("JuiceSwapGateway", function () {
       const tx = await gateway.connect(user1).swapExactTokensForTokens(
         await jusd.getAddress(),
         await wcbtc.getAddress(),
+        3000,
         swapAmount,
         MIN_OUTPUT,
         user1.address,
         deadline
       );
 
-      await expect(tx).to.emit(gateway, "SwapExecuted");
+      await expect(tx)
+        .to.emit(gateway, "SwapExecuted")
+        .withArgs(
+          user1.address,
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          anyValue, // amountIn (svJUSD shares, varies)
+          anyValue  // amountOut (from mock)
+        );
     });
 
     it("Should revert if deadline expired", async function () {
@@ -238,9 +248,10 @@ describe("JuiceSwapGateway", function () {
 
       await expect(
         gateway.connect(user1).swapExactTokensForTokens(
-          await jusd.getAddress(),
-          await wcbtc.getAddress(),
-          swapAmount,
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        3000,
+        swapAmount,
           MIN_OUTPUT,
           user1.address,
           pastDeadline
@@ -256,9 +267,10 @@ describe("JuiceSwapGateway", function () {
 
       await expect(
         gateway.connect(user1).swapExactTokensForTokens(
-          await jusd.getAddress(),
-          await wcbtc.getAddress(),
-          0,
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        3000,
+        0,
           MIN_OUTPUT,
           user1.address,
           deadline
@@ -280,9 +292,10 @@ describe("JuiceSwapGateway", function () {
 
       await expect(
         gateway.connect(user1).swapExactTokensForTokens(
-          await jusd.getAddress(),
-          await wcbtc.getAddress(),
-          swapAmount,
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        3000,
+        swapAmount,
           MIN_OUTPUT,
           user1.address,
           deadline
@@ -305,6 +318,7 @@ describe("JuiceSwapGateway", function () {
       await gateway.connect(user1).swapExactTokensForTokens(
         await jusd.getAddress(),
         await wcbtc.getAddress(),
+        3000,
         swapAmount,
         0,
         user1.address,
@@ -316,52 +330,52 @@ describe("JuiceSwapGateway", function () {
     });
   });
 
-  describe("Swap: JUICE → Other Token", function () {
-    it("Should swap JUICE for another token via Equity", async function () {
-      const { gateway, user1, juice, wcbtc, swapRouter } =
+  describe("JUICE Input Restriction", function () {
+    it("Should revert when JUICE is used as input token in swap", async function () {
+      const { gateway, user1, juice, wcbtc } =
         await loadFixture(deployGatewayWithBalancesFixture);
 
       const deadline = (await time.latest()) + DEADLINE_OFFSET;
       const swapAmount = ethers.parseEther("10");
 
-      await swapRouter.setSwapOutput(ethers.parseEther("0.5"));
       await juice.connect(user1).approve(await gateway.getAddress(), swapAmount);
 
       await expect(
         gateway.connect(user1).swapExactTokensForTokens(
-          await juice.getAddress(),
-          await wcbtc.getAddress(),
-          swapAmount,
+        await juice.getAddress(),
+        await wcbtc.getAddress(),
+        3000,
+        swapAmount,
           0,
           user1.address,
           deadline
         )
-      ).to.emit(gateway, "SwapExecuted");
+      ).to.be.revertedWithCustomError(gateway, "JuiceInputNotSupported");
     });
 
-    it("Should convert JUICE → JUSD → svJUSD during swap", async function () {
-      const { gateway, user1, juice, wcbtc, swapRouter } =
+    it("Should revert when JUICE is used as input in addLiquidity", async function () {
+      const { gateway, user1, juice, wcbtc } =
         await loadFixture(deployGatewayWithBalancesFixture);
 
       const deadline = (await time.latest()) + DEADLINE_OFFSET;
-      const swapAmount = ethers.parseEther("10");
+      const liquidityAmount = ethers.parseEther("10");
 
-      await swapRouter.setSwapOutput(ethers.parseEther("0.5"));
-      await juice.connect(user1).approve(await gateway.getAddress(), swapAmount);
+      await juice.connect(user1).approve(await gateway.getAddress(), liquidityAmount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), liquidityAmount);
 
-      const juiceBalanceBefore = await juice.balanceOf(user1.address);
-
-      await gateway.connect(user1).swapExactTokensForTokens(
+      await expect(
+        gateway.connect(user1).addLiquidity(
         await juice.getAddress(),
         await wcbtc.getAddress(),
-        swapAmount,
-        0,
-        user1.address,
-        deadline
-      );
-
-      const juiceBalanceAfter = await juice.balanceOf(user1.address);
-      expect(juiceBalanceAfter).to.equal(juiceBalanceBefore - swapAmount);
+        3000,
+        liquidityAmount,
+          liquidityAmount,
+          0,
+          0,
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "JuiceInputNotSupported");
     });
   });
 
@@ -378,6 +392,7 @@ describe("JuiceSwapGateway", function () {
       const tx = await gateway.connect(user1).swapExactTokensForTokens(
         ethers.ZeroAddress, // Native token
         await wcbtc.getAddress(),
+        3000,
         swapAmount,
         0,
         user1.address,
@@ -385,7 +400,15 @@ describe("JuiceSwapGateway", function () {
         { value: swapAmount }
       );
 
-      await expect(tx).to.emit(gateway, "SwapExecuted");
+      await expect(tx)
+        .to.emit(gateway, "SwapExecuted")
+        .withArgs(
+          user1.address,
+          ethers.ZeroAddress,
+          await wcbtc.getAddress(),
+          anyValue, // amountIn
+          anyValue  // amountOut
+        );
     });
 
     it("Should revert if msg.value doesn't match amount for native swap", async function () {
@@ -397,9 +420,10 @@ describe("JuiceSwapGateway", function () {
 
       await expect(
         gateway.connect(user1).swapExactTokensForTokens(
-          ethers.ZeroAddress,
-          await wcbtc.getAddress(),
-          swapAmount,
+        ethers.ZeroAddress,
+        await wcbtc.getAddress(),
+        3000,
+        swapAmount,
           0,
           user1.address,
           deadline,
@@ -423,6 +447,7 @@ describe("JuiceSwapGateway", function () {
       await gateway.connect(user1).swapExactTokensForTokens(
         await jusd.getAddress(),
         ethers.ZeroAddress, // Native cBTC out
+        3000,
         swapAmount,
         0,
         user1.address,
@@ -460,6 +485,7 @@ describe("JuiceSwapGateway", function () {
       const tx = await gateway.connect(user1).addLiquidity(
         await jusd.getAddress(),
         await wcbtc.getAddress(),
+        3000,
         jusdAmount,
         wcbtcAmount,
         jusdAmount / 2n,
@@ -468,7 +494,16 @@ describe("JuiceSwapGateway", function () {
         deadline
       );
 
-      await expect(tx).to.emit(gateway, "LiquidityAdded");
+      await expect(tx)
+        .to.emit(gateway, "LiquidityAdded")
+        .withArgs(
+          user1.address,
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          anyValue, // amountA (actual amount added)
+          anyValue, // amountB (actual amount added)
+          1  // tokenId from mock
+        );
     });
 
     it("Should convert JUSD to svJUSD when adding liquidity", async function () {
@@ -496,6 +531,7 @@ describe("JuiceSwapGateway", function () {
       await gateway.connect(user1).addLiquidity(
         await jusd.getAddress(),
         await wcbtc.getAddress(),
+        3000,
         jusdAmount,
         wcbtcAmount,
         0,
@@ -531,6 +567,7 @@ describe("JuiceSwapGateway", function () {
       const tx = await gateway.connect(user1).addLiquidity(
         await jusd.getAddress(),
         ethers.ZeroAddress, // Native cBTC
+        3000,
         jusdAmount,
         cbtcAmount,
         0,
@@ -540,7 +577,16 @@ describe("JuiceSwapGateway", function () {
         { value: cbtcAmount }
       );
 
-      await expect(tx).to.emit(gateway, "LiquidityAdded");
+      await expect(tx)
+        .to.emit(gateway, "LiquidityAdded")
+        .withArgs(
+          user1.address,
+          await jusd.getAddress(),
+          ethers.ZeroAddress,
+          anyValue, // amountA
+          anyValue, // amountB
+          1  // tokenId
+        );
     });
 
     it("Should return excess tokens to user", async function () {
@@ -570,6 +616,7 @@ describe("JuiceSwapGateway", function () {
       await gateway.connect(user1).addLiquidity(
         await jusd.getAddress(),
         await wcbtc.getAddress(),
+        3000,
         jusdAmount,
         wcbtcAmount,
         0,
@@ -592,9 +639,10 @@ describe("JuiceSwapGateway", function () {
 
       await expect(
         gateway.connect(user1).addLiquidity(
-          await jusd.getAddress(),
-          await wcbtc.getAddress(),
-          SWAP_AMOUNT,
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        3000,
+        SWAP_AMOUNT,
           SWAP_AMOUNT,
           0,
           0,
@@ -650,7 +698,16 @@ describe("JuiceSwapGateway", function () {
         deadline
       );
 
-      await expect(tx).to.emit(gateway, "LiquidityRemoved");
+      await expect(tx)
+        .to.emit(gateway, "LiquidityRemoved")
+        .withArgs(
+          user1.address,
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          anyValue, // amountA
+          anyValue, // amountB
+          tokenId  // tokenId = 1
+        );
     });
 
     it("Should convert svJUSD back to JUSD when removing liquidity", async function () {
@@ -769,6 +826,72 @@ describe("JuiceSwapGateway", function () {
     });
   });
 
+  describe("NFT Handling", function () {
+    it("Should return NFT to user after removing liquidity", async function () {
+      const { gateway, user1, jusd, svJusd, wcbtc, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const tokenId = 1;
+
+      await positionManager.setPositionData(
+        tokenId,
+        await svJusd.getAddress(),
+        await wcbtc.getAddress(),
+        100
+      );
+      await positionManager.setDecreaseResult(
+        ethers.parseEther("100"),
+        ethers.parseEther("100")
+      );
+
+      const posManagerAddr = await positionManager.getAddress();
+      const [owner] = await ethers.getSigners();
+      await jusd.mint(owner.address, ethers.parseEther("100"));
+      await jusd.connect(owner).approve(await svJusd.getAddress(), ethers.parseEther("100"));
+      await svJusd.connect(owner).deposit(ethers.parseEther("100"), posManagerAddr);
+      await wcbtc.deposit({ value: ethers.parseEther("100") });
+      await wcbtc.transfer(posManagerAddr, ethers.parseEther("100"));
+
+      await positionManager.mintNFT(user1.address, tokenId);
+      await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
+
+      await gateway.connect(user1).removeLiquidity(
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        tokenId,
+        0,
+        0,
+        user1.address,
+        deadline
+      );
+
+      expect(await positionManager.ownerOf(tokenId)).to.equal(user1.address);
+    });
+
+    it("Should revert if non-owner tries to remove liquidity", async function () {
+      const { gateway, user1, user2, jusd, wcbtc, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const tokenId = 1;
+
+      await positionManager.mintNFT(user1.address, tokenId);
+
+      await expect(
+        gateway.connect(user2).removeLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          tokenId,
+          0,
+          0,
+          user2.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "NotNFTOwner");
+    });
+  });
+
   describe("Admin Functions", function () {
     it("Should allow owner to set default fee", async function () {
       const { gateway, owner } = await loadFixture(deployGatewayFixture);
@@ -787,6 +910,34 @@ describe("JuiceSwapGateway", function () {
       await expect(
         gateway.connect(user1).setDefaultFee(500)
       ).to.be.revertedWithCustomError(gateway, "OwnableUnauthorizedAccount");
+    });
+
+    it("Should accept valid standard fee tiers", async function () {
+      const { gateway, owner } = await loadFixture(deployGatewayFixture);
+
+      await expect(gateway.connect(owner).setDefaultFee(100)).to.not.be.reverted;
+      await expect(gateway.connect(owner).setDefaultFee(500)).to.not.be.reverted;
+      await expect(gateway.connect(owner).setDefaultFee(3000)).to.not.be.reverted;
+      await expect(gateway.connect(owner).setDefaultFee(10000)).to.not.be.reverted;
+    });
+
+    it("Should accept custom fee tiers below 1M", async function () {
+      const { gateway, owner } = await loadFixture(deployGatewayFixture);
+
+      await expect(gateway.connect(owner).setDefaultFee(2000)).to.not.be.reverted;
+      await expect(gateway.connect(owner).setDefaultFee(999999)).to.not.be.reverted;
+    });
+
+    it("Should reject fee tiers >= 1,000,000", async function () {
+      const { gateway, owner } = await loadFixture(deployGatewayFixture);
+
+      await expect(
+        gateway.connect(owner).setDefaultFee(1_000_000)
+      ).to.be.revertedWithCustomError(gateway, "InvalidFee");
+
+      await expect(
+        gateway.connect(owner).setDefaultFee(2_000_000)
+      ).to.be.revertedWithCustomError(gateway, "InvalidFee");
     });
 
     it("Should allow owner to pause", async function () {
@@ -823,9 +974,10 @@ describe("JuiceSwapGateway", function () {
 
       await expect(
         gateway.connect(user1).swapExactTokensForTokens(
-          await jusd.getAddress(),
-          await wcbtc.getAddress(),
-          SWAP_AMOUNT,
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        3000,
+        SWAP_AMOUNT,
           0,
           user1.address,
           deadline
@@ -914,6 +1066,7 @@ describe("JuiceSwapGateway", function () {
       await gateway.connect(user1).swapExactTokensForTokens(
         await jusd.getAddress(),
         await wcbtc.getAddress(),
+        3000,
         tinyAmount,
         0,
         user1.address,
@@ -951,6 +1104,7 @@ describe("JuiceSwapGateway", function () {
         await gateway.connect(user1).addLiquidity(
           jusdAddr,
           wcbtcAddr,
+          3000,
           SWAP_AMOUNT,
           SWAP_AMOUNT,
           0,
@@ -962,6 +1116,7 @@ describe("JuiceSwapGateway", function () {
         await gateway.connect(user1).addLiquidity(
           wcbtcAddr,
           jusdAddr,
+          3000,
           SWAP_AMOUNT,
           SWAP_AMOUNT,
           0,
@@ -987,6 +1142,7 @@ describe("JuiceSwapGateway", function () {
       const tx1 = await gateway.connect(user1).swapExactTokensForTokens(
         await jusd.getAddress(),
         await wcbtc.getAddress(),
+        3000,
         SWAP_AMOUNT / 2n,
         0,
         user1.address,
@@ -997,6 +1153,7 @@ describe("JuiceSwapGateway", function () {
       const tx2 = await gateway.connect(user1).swapExactTokensForTokens(
         await jusd.getAddress(),
         await wcbtc.getAddress(),
+        3000,
         SWAP_AMOUNT / 2n,
         0,
         user1.address,
@@ -1009,6 +1166,404 @@ describe("JuiceSwapGateway", function () {
 
       // Second tx might use slightly less gas
       expect(receipt2!.gasUsed).to.be.lte(receipt1!.gasUsed);
+    });
+  });
+
+  describe("Fee Tier Validation", function () {
+    it("Should revert swap with fee >= 1,000,000", async function () {
+      const { gateway, user1, jusd, wcbtc, swapRouter } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const swapAmount = ethers.parseEther("10");
+
+      await swapRouter.setSwapOutput(ethers.parseEther("0.5"));
+      await jusd.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+      await expect(
+        gateway.connect(user1).swapExactTokensForTokens(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          1_000_000, // Fee >= 1M should revert
+          swapAmount,
+          0,
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "InvalidFee");
+    });
+
+    it("Should revert addLiquidity with unsupported fee tier", async function () {
+      const { gateway, user1, jusd, wcbtc } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("10");
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), amount);
+
+      await expect(
+        gateway.connect(user1).addLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          2500, // Not in factory
+          amount,
+          amount,
+          0,
+          0,
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "InvalidFee");
+    });
+  });
+
+  describe("Factory Integration", function () {
+    it("Should set correct FACTORY immutable address", async function () {
+      const { gateway, positionManager } = await loadFixture(deployGatewayFixture);
+
+      const factoryAddress = await gateway.FACTORY();
+      const expectedFactory = await positionManager.factory();
+
+      expect(factoryAddress).to.equal(expectedFactory);
+      expect(factoryAddress).to.not.equal(ethers.ZeroAddress);
+    });
+
+    it("Should query factory for correct tick spacing", async function () {
+      const { gateway } = await loadFixture(deployGatewayFixture);
+
+      const factoryAddress = await gateway.FACTORY();
+      const MockFactory = await ethers.getContractFactory("MockFactory");
+      const factory = MockFactory.attach(factoryAddress);
+
+      expect(await factory.feeAmountTickSpacing(100)).to.equal(1);
+      expect(await factory.feeAmountTickSpacing(500)).to.equal(10);
+      expect(await factory.feeAmountTickSpacing(3000)).to.equal(60);
+      expect(await factory.feeAmountTickSpacing(10000)).to.equal(200);
+    });
+
+    it("Should return zero for unsupported fee tiers in factory", async function () {
+      const { gateway } = await loadFixture(deployGatewayFixture);
+
+      const factoryAddress = await gateway.FACTORY();
+      const MockFactory = await ethers.getContractFactory("MockFactory");
+      const factory = MockFactory.attach(factoryAddress);
+
+      expect(await factory.feeAmountTickSpacing(2500)).to.equal(0);
+      expect(await factory.feeAmountTickSpacing(1234)).to.equal(0);
+    });
+  });
+
+  describe("Multiple Fee Tier Support", function () {
+    it("Should swap with 0.01% fee tier (100)", async function () {
+      const { gateway, user1, jusd, wcbtc, swapRouter } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const swapAmount = ethers.parseEther("10");
+
+      await swapRouter.setSwapOutput(ethers.parseEther("0.5"));
+      await jusd.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+      const tx = await gateway.connect(user1).swapExactTokensForTokens(
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        100, // 0.01% fee tier
+        swapAmount,
+        0,
+        user1.address,
+        deadline
+      );
+
+      await expect(tx)
+        .to.emit(gateway, "SwapExecuted")
+        .withArgs(user1.address, await jusd.getAddress(), await wcbtc.getAddress(), anyValue, anyValue);
+    });
+
+    it("Should swap with 0.05% fee tier (500)", async function () {
+      const { gateway, user1, jusd, wcbtc, swapRouter } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const swapAmount = ethers.parseEther("10");
+
+      await swapRouter.setSwapOutput(ethers.parseEther("0.5"));
+      await jusd.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+      const tx = await gateway.connect(user1).swapExactTokensForTokens(
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        500, // 0.05% fee tier
+        swapAmount,
+        0,
+        user1.address,
+        deadline
+      );
+
+      await expect(tx)
+        .to.emit(gateway, "SwapExecuted")
+        .withArgs(user1.address, await jusd.getAddress(), await wcbtc.getAddress(), anyValue, anyValue);
+    });
+
+    it("Should swap with 1% fee tier (10000)", async function () {
+      const { gateway, user1, jusd, wcbtc, swapRouter } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const swapAmount = ethers.parseEther("10");
+
+      await swapRouter.setSwapOutput(ethers.parseEther("0.5"));
+      await jusd.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+      const tx = await gateway.connect(user1).swapExactTokensForTokens(
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        10000, // 1% fee tier
+        swapAmount,
+        0,
+        user1.address,
+        deadline
+      );
+
+      await expect(tx)
+        .to.emit(gateway, "SwapExecuted")
+        .withArgs(user1.address, await jusd.getAddress(), await wcbtc.getAddress(), anyValue, anyValue);
+    });
+
+    it("Should add liquidity with 0.01% fee tier (100)", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("10");
+
+      const svJusdShares = await svJusd.convertToShares(amount);
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr
+        ? [svJusdShares, amount]
+        : [amount, svJusdShares];
+      await positionManager.setMintResult(1, 100, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), amount);
+
+      const tx = await gateway.connect(user1).addLiquidity(
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        100, // 0.01% fee tier
+        amount,
+        amount,
+        0,
+        0,
+        user1.address,
+        deadline
+      );
+
+      await expect(tx)
+        .to.emit(gateway, "LiquidityAdded")
+        .withArgs(user1.address, await jusd.getAddress(), await wcbtc.getAddress(), anyValue, anyValue, 1);
+    });
+
+    it("Should add liquidity with 0.05% fee tier (500)", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("10");
+
+      const svJusdShares = await svJusd.convertToShares(amount);
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr
+        ? [svJusdShares, amount]
+        : [amount, svJusdShares];
+      await positionManager.setMintResult(1, 100, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), amount);
+
+      const tx = await gateway.connect(user1).addLiquidity(
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        500, // 0.05% fee tier
+        amount,
+        amount,
+        0,
+        0,
+        user1.address,
+        deadline
+      );
+
+      await expect(tx)
+        .to.emit(gateway, "LiquidityAdded")
+        .withArgs(user1.address, await jusd.getAddress(), await wcbtc.getAddress(), anyValue, anyValue, 1);
+    });
+
+    it("Should add liquidity with 1% fee tier (10000)", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("10");
+
+      const svJusdShares = await svJusd.convertToShares(amount);
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr
+        ? [svJusdShares, amount]
+        : [amount, svJusdShares];
+      await positionManager.setMintResult(1, 100, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), amount);
+
+      const tx = await gateway.connect(user1).addLiquidity(
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        10000, // 1% fee tier
+        amount,
+        amount,
+        0,
+        0,
+        user1.address,
+        deadline
+      );
+
+      await expect(tx)
+        .to.emit(gateway, "LiquidityAdded")
+        .withArgs(user1.address, await jusd.getAddress(), await wcbtc.getAddress(), anyValue, anyValue, 1);
+    });
+  });
+
+  describe("Event Parameter Validation", function () {
+    it("Should emit SwapExecuted with all correct parameters", async function () {
+      const { gateway, user1, jusd, wcbtc, swapRouter } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const swapAmount = ethers.parseEther("10");
+      const expectedOutput = ethers.parseEther("0.5");
+
+      await swapRouter.setSwapOutput(expectedOutput);
+      await jusd.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+      const tx = await gateway.connect(user1).swapExactTokensForTokens(
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        3000,
+        swapAmount,
+        0,
+        user1.address,
+        deadline
+      );
+
+      await expect(tx)
+        .to.emit(gateway, "SwapExecuted")
+        .withArgs(
+          user1.address,
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          anyValue, // Input amount varies due to svJUSD conversion
+          expectedOutput
+        );
+    });
+
+    it("Should emit LiquidityAdded with correct tokenId (not liquidity amount)", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("10");
+      const expectedTokenId = 42; // Use different tokenId to verify
+
+      const svJusdShares = await svJusd.convertToShares(amount);
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr
+        ? [svJusdShares, amount]
+        : [amount, svJusdShares];
+      await positionManager.setMintResult(expectedTokenId, 999, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), amount);
+
+      const tx = await gateway.connect(user1).addLiquidity(
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        3000,
+        amount,
+        amount,
+        0,
+        0,
+        user1.address,
+        deadline
+      );
+
+      // Event should emit tokenId (42), not liquidity amount (999)
+      await expect(tx)
+        .to.emit(gateway, "LiquidityAdded")
+        .withArgs(
+          user1.address,
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          anyValue,
+          anyValue,
+          expectedTokenId  // This is the NFT tokenId, NOT the liquidity amount
+        );
+    });
+
+    it("Should emit LiquidityRemoved with correct tokenId", async function () {
+      const { gateway, user1, jusd, svJusd, wcbtc, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const tokenId = 7; // Use specific tokenId
+      const liquidity = 100;
+
+      await positionManager.setPositionData(
+        tokenId,
+        await svJusd.getAddress(),
+        await wcbtc.getAddress(),
+        liquidity
+      );
+      await positionManager.setDecreaseResult(
+        ethers.parseEther("10"),
+        ethers.parseEther("10")
+      );
+
+      const posManagerAddr = await positionManager.getAddress();
+      const [owner] = await ethers.getSigners();
+      await jusd.mint(owner.address, ethers.parseEther("10"));
+      await jusd.connect(owner).approve(await svJusd.getAddress(), ethers.parseEther("10"));
+      await svJusd.connect(owner).deposit(ethers.parseEther("10"), posManagerAddr);
+      await wcbtc.deposit({ value: ethers.parseEther("10") });
+      await wcbtc.transfer(posManagerAddr, ethers.parseEther("10"));
+
+      await positionManager.mintNFT(user1.address, tokenId);
+      await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
+
+      const tx = await gateway.connect(user1).removeLiquidity(
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        tokenId,
+        0,
+        0,
+        user1.address,
+        deadline
+      );
+
+      await expect(tx)
+        .to.emit(gateway, "LiquidityRemoved")
+        .withArgs(
+          user1.address,
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          anyValue,
+          anyValue,
+          tokenId  // Verify correct tokenId is emitted
+        );
     });
   });
 });

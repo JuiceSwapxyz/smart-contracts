@@ -1,138 +1,80 @@
-import { ethers } from "hardhat";
+import { ethers, run, network } from "hardhat";
 
 async function main() {
-  console.log("🚀 Deploying JuiceSwapGateway...\n");
+  console.log(`🚀 Deploying JuiceSwapGateway to ${network.name}...\n`);
 
-  // Get deployer account
   const [deployer] = await ethers.getSigners();
-  console.log("Deployer address:", deployer.address);
+  console.log("👤 Deployer:", deployer.address);
+  console.log("💰 Balance:", ethers.formatEther(await ethers.provider.getBalance(deployer.address)), "ETH/cBTC\n");
 
-  const balance = await ethers.provider.getBalance(deployer.address);
-  console.log("Deployer balance:", ethers.formatEther(balance), "cBTC\n");
-
-  // Contract addresses - from environment variables
-  const JUSD_ADDRESS = process.env.JUSD_ADDRESS;
-  const SV_JUSD_ADDRESS = process.env.SV_JUSD_ADDRESS;
-  const JUICE_ADDRESS = process.env.JUICE_ADDRESS;
-  const WCBTC_ADDRESS = process.env.WCBTC_ADDRESS;
-  const SWAP_ROUTER_ADDRESS = process.env.SWAP_ROUTER_ADDRESS;
-  const POSITION_MANAGER_ADDRESS = process.env.POSITION_MANAGER_ADDRESS;
-
-  // Validate addresses
-  if (!JUSD_ADDRESS || !SV_JUSD_ADDRESS || !JUICE_ADDRESS ||
-      !WCBTC_ADDRESS || !SWAP_ROUTER_ADDRESS || !POSITION_MANAGER_ADDRESS) {
-    throw new Error(
-      "❌ Missing required environment variables. Please set:\n" +
-      "  - JUSD_ADDRESS\n" +
-      "  - SV_JUSD_ADDRESS\n" +
-      "  - JUICE_ADDRESS\n" +
-      "  - WCBTC_ADDRESS\n" +
-      "  - SWAP_ROUTER_ADDRESS\n" +
-      "  - POSITION_MANAGER_ADDRESS"
-    );
-  }
-
-  console.log("📋 Contract Addresses:");
-  console.log("├─ JUSD:               ", JUSD_ADDRESS);
-  console.log("├─ svJUSD:             ", SV_JUSD_ADDRESS);
-  console.log("├─ JUICE:              ", JUICE_ADDRESS);
-  console.log("├─ WcBTC:              ", WCBTC_ADDRESS);
-  console.log("├─ SwapRouter:         ", SWAP_ROUTER_ADDRESS);
-  console.log("└─ PositionManager:    ", POSITION_MANAGER_ADDRESS);
-  console.log();
-
-  // Deploy JuiceSwapGateway
-  console.log("⏳ Deploying JuiceSwapGateway contract...");
-
-  const JuiceSwapGateway = await ethers.getContractFactory("JuiceSwapGateway");
-  const gateway = await JuiceSwapGateway.deploy(
+  // 1. LOAD & VALIDATE ADDRESSES
+  const {
     JUSD_ADDRESS,
     SV_JUSD_ADDRESS,
     JUICE_ADDRESS,
     WCBTC_ADDRESS,
     SWAP_ROUTER_ADDRESS,
     POSITION_MANAGER_ADDRESS
-  );
+  } = process.env;
+
+  if (!JUSD_ADDRESS || !SV_JUSD_ADDRESS || !JUICE_ADDRESS || !WCBTC_ADDRESS || !SWAP_ROUTER_ADDRESS || !POSITION_MANAGER_ADDRESS) {
+    throw new Error("❌ Missing environment variables in .env file!");
+  }
+
+  const args = [
+    JUSD_ADDRESS,
+    SV_JUSD_ADDRESS,
+    JUICE_ADDRESS,
+    WCBTC_ADDRESS,
+    SWAP_ROUTER_ADDRESS,
+    POSITION_MANAGER_ADDRESS
+  ];
+
+  console.log("📋 Configuration:");
+  console.log(`  JUSD:            ${JUSD_ADDRESS}`);
+  console.log(`  svJUSD:          ${SV_JUSD_ADDRESS}`);
+  console.log(`  JUICE:           ${JUICE_ADDRESS}`);
+  console.log(`  WcBTC:           ${WCBTC_ADDRESS}`);
+  console.log(`  SwapRouter:      ${SWAP_ROUTER_ADDRESS}`);
+  console.log(`  PosManager:      ${POSITION_MANAGER_ADDRESS}\n`);
+
+  // 2. DEPLOY
+  console.log("⏳ Deploying contract...");
+  const JuiceSwapGateway = await ethers.getContractFactory("JuiceSwapGateway");
+  const gateway = await JuiceSwapGateway.deploy(...args);
 
   await gateway.waitForDeployment();
   const gatewayAddress = await gateway.getAddress();
 
-  console.log("✅ JuiceSwapGateway deployed to:", gatewayAddress);
-  console.log();
+  console.log(`✅ Deployed to: ${gatewayAddress}`);
 
-  // Wait for block confirmations before verification
-  console.log("⏳ Waiting for 5 block confirmations...");
-  await gateway.deploymentTransaction()?.wait(5);
-  console.log("✅ Confirmations complete\n");
+  // 3. VALIDATE DEPLOYMENT
+  console.log("\n🔍 Validating deployment...");
+  const defaultFee = await gateway.defaultFee();
+  const owner = await gateway.owner();
+  const isPaused = await gateway.paused();
+  const factory = await gateway.FACTORY();
 
-  // Get deployment transaction details
-  const deployTx = gateway.deploymentTransaction();
-  if (deployTx) {
-    console.log("📊 Deployment Details:");
-    console.log("├─ Transaction Hash:", deployTx.hash);
-    console.log("├─ Block Number:    ", deployTx.blockNumber);
-    console.log("└─ Gas Used:        ", deployTx.gasLimit.toString());
-    console.log();
+  console.log(`  Default Fee: ${defaultFee} (${defaultFee === 3000n ? '0.3%' : 'custom'})`);
+  console.log(`  Owner: ${owner}`);
+  console.log(`  Paused: ${isPaused}`);
+  console.log(`  Factory: ${factory}`);
+
+  if (owner !== deployer.address) {
+    console.log("  ⚠️  Warning: Owner is not deployer!");
+  }
+  if (isPaused) {
+    console.log("  ⚠️  Warning: Contract is paused!");
   }
 
-  // Output useful information
-  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("📝 Add this to your .env file:");
-  console.log(`JUICESWAP_GATEWAY_ADDRESS=${gatewayAddress}`);
-  console.log();
+  // 4. VERIFICATION INSTRUCTIONS
+  console.log("\n📋 To verify contract on explorer:");
+  console.log(`npx hardhat verify --network ${network.name} ${gatewayAddress} ${args.join(" ")}`);
 
-  console.log("🔍 Verification command:");
-  const network = process.env.HARDHAT_NETWORK || 'citreaTestnet';
-  console.log(`npx hardhat verify --network ${network} ${gatewayAddress} \\`);
-  console.log(`  ${JUSD_ADDRESS} \\`);
-  console.log(`  ${SV_JUSD_ADDRESS} \\`);
-  console.log(`  ${JUICE_ADDRESS} \\`);
-  console.log(`  ${WCBTC_ADDRESS} \\`);
-  console.log(`  ${SWAP_ROUTER_ADDRESS} \\`);
-  console.log(`  ${POSITION_MANAGER_ADDRESS}`);
-  console.log();
-
-  console.log("🌐 View on Explorer:");
-  console.log(`https://explorer.testnet.citrea.xyz/address/${gatewayAddress}`);
-  console.log();
-
-  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("✨ Deployment complete!");
-  console.log();
-
-  // Optional: Verify contract if not on local network
-  if (network !== 'hardhat' && network !== 'localhost') {
-    console.log("⏳ Verifying contract on block explorer...");
-    try {
-      await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10s for indexer
-
-      await (await import("hardhat")).run("verify:verify", {
-        address: gatewayAddress,
-        constructorArguments: [
-          JUSD_ADDRESS,
-          SV_JUSD_ADDRESS,
-          JUICE_ADDRESS,
-          WCBTC_ADDRESS,
-          SWAP_ROUTER_ADDRESS,
-          POSITION_MANAGER_ADDRESS,
-        ],
-      });
-      console.log("✅ Contract verified!");
-    } catch (error: any) {
-      if (error.message.includes("already verified")) {
-        console.log("✅ Contract already verified!");
-      } else {
-        console.log("⚠️  Verification failed (you can verify manually later):");
-        console.log(error.message);
-      }
-    }
-  }
+  console.log("\n✨ Deployment complete!");
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((error) => {
-    console.error("❌ Deployment failed:");
-    console.error(error);
-    process.exit(1);
-  });
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

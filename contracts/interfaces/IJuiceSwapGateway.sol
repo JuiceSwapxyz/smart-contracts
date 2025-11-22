@@ -33,7 +33,7 @@ interface IJuiceSwapGateway {
      * @param tokenB Second token address
      * @param amountA Amount of first token
      * @param amountB Amount of second token
-     * @param liquidity LP tokens received
+     * @param tokenId NFT position token ID received
      */
     event LiquidityAdded(
         address indexed user,
@@ -41,7 +41,7 @@ interface IJuiceSwapGateway {
         address indexed tokenB,
         uint256 amountA,
         uint256 amountB,
-        uint256 liquidity
+        uint256 tokenId
     );
 
     /**
@@ -51,7 +51,7 @@ interface IJuiceSwapGateway {
      * @param tokenB Second token address
      * @param amountA Amount of first token received
      * @param amountB Amount of second token received
-     * @param liquidity LP tokens burned
+     * @param tokenId NFT position token ID burned
      */
     event LiquidityRemoved(
         address indexed user,
@@ -59,13 +59,14 @@ interface IJuiceSwapGateway {
         address indexed tokenB,
         uint256 amountA,
         uint256 amountB,
-        uint256 liquidity
+        uint256 tokenId
     );
 
     /**
      * @notice Swaps an exact amount of input tokens for as many output tokens as possible
      * @param tokenIn The address of the input token (use address(0) for native cBTC)
      * @param tokenOut The address of the output token (use address(0) for native cBTC)
+     * @param fee The Uniswap V3 fee tier (100 = 0.01%, 500 = 0.05%, 3000 = 0.3%, 10000 = 1%)
      * @param amountIn The amount of input tokens to swap
      * @param minAmountOut The minimum amount of output tokens to receive (slippage protection)
      * @param to The recipient address for output tokens
@@ -75,6 +76,7 @@ interface IJuiceSwapGateway {
     function swapExactTokensForTokens(
         address tokenIn,
         address tokenOut,
+        uint24 fee,
         uint256 amountIn,
         uint256 minAmountOut,
         address to,
@@ -85,6 +87,7 @@ interface IJuiceSwapGateway {
      * @notice Adds liquidity to a token pair pool
      * @param tokenA The address of the first token (use address(0) for native cBTC)
      * @param tokenB The address of the second token
+     * @param fee The Uniswap V3 fee tier (100 = 0.01%, 500 = 0.05%, 3000 = 0.3%, 10000 = 1%)
      * @param amountADesired The desired amount of tokenA to add
      * @param amountBDesired The desired amount of tokenB to add
      * @param amountAMin The minimum amount of tokenA to add (slippage protection)
@@ -98,6 +101,7 @@ interface IJuiceSwapGateway {
     function addLiquidity(
         address tokenA,
         address tokenB,
+        uint24 fee,
         uint256 amountADesired,
         uint256 amountBDesired,
         uint256 amountAMin,

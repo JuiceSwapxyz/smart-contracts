@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "./MockFactory.sol";
 
 /**
  * @title MockPositionManager
@@ -10,6 +11,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  * @dev Simulates NFT-based liquidity positions
  */
 contract MockPositionManager is ERC721 {
+    MockFactory private immutable _factory;
     struct MintParams {
         address token0;
         address token1;
@@ -45,7 +47,13 @@ contract MockPositionManager is ERC721 {
     uint256 private _mockDecreaseAmount0;
     uint256 private _mockDecreaseAmount1;
 
-    constructor() ERC721("Mock Position", "MPOS") {}
+    constructor() ERC721("Mock Position", "MPOS") {
+        _factory = new MockFactory();
+    }
+
+    function factory() external view returns (address) {
+        return address(_factory);
+    }
 
     /**
      * @notice Mock mint function
