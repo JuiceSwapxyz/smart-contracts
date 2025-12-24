@@ -22,6 +22,7 @@ const config: HardhatUserConfig = {
             enabled: true,
             runs: 200,
           },
+          viaIR: true,
         },
       },
       {
@@ -44,8 +45,8 @@ const config: HardhatUserConfig = {
         network: "citreaTestnet",
         chainId: 5115,
         urls: {
-          apiURL: "https://explorer.testnet.citrea.xyz/api",
-          browserURL: "https://explorer.testnet.citrea.xyz",
+          apiURL: "https://dev.testnet.citreascan.com/api",
+          browserURL: "https://dev.testnet.citreascan.com",
         },
       },
     ],
