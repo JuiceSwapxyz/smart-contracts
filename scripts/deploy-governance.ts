@@ -1,310 +1,411 @@
-import { ethers, network as hardhatNetwork } from 'hardhat'
-import * as fs from 'fs'
-import * as path from 'path'
+import { ethers, network as hardhatNetwork } from "hardhat";
+import * as fs from "fs";
+import * as path from "path";
+import { ADDRESS } from "@juicedollar/jusd";
+import { V3_CORE_FACTORY_ADDRESSES, CHAIN_TO_ADDRESSES_MAP } from "@juiceswapxyz/sdk-core";
+import {
+  getGasConfig,
+  getNetworkConfig,
+  getConfirmations,
+  formatGasOverrides,
+  validateMinimumBalance,
+  validateContractDeployed,
+  verifyContract,
+  printDeploymentSummary,
+} from "./utils/deploy-helpers";
 
 /**
- * Deploy JuiceSwapGovernor and transfer ownership from EOA to DAO
+ * Deploy JuiceSwapGovernor and JuiceSwapFeeCollector, then transfer
+ * ownership of Factory and ProxyAdmin to the Governor.
+ *
+ * This script:
+ * 1. Gets addresses from canonical packages (@juicedollar/jusd, @juiceswapxyz/sdk-core)
+ * 2. Validates PROXY_ADMIN_ADDRESS from .env (governance-specific)
+ * 3. Checks deployer balance
+ * 4. Deploys JuiceSwapGovernor
+ * 5. Deploys JuiceSwapFeeCollector (owned by Governor)
+ * 6. Transfers Factory ownership to Governor
+ * 7. Transfers ProxyAdmin ownership to Governor
+ * 8. Saves deployment info to JSON
+ * 9. Verifies both contracts on block explorer
  */
 
-interface GasConfig {
-  maxFeePerGas: string;
-  maxPriorityFeePerGas: string;
+// Only PROXY_ADMIN_ADDRESS remains in .env (governance-specific, not in packages)
+if (!process.env.PROXY_ADMIN_ADDRESS) {
+  throw new Error(
+    "Missing required environment variable: PROXY_ADMIN_ADDRESS\n\n" +
+    "This is the only address that must be set in .env.\n" +
+    "All other addresses are imported from packages."
+  );
 }
 
-/** Returns network-specific gas configuration (values in gwei). */
-function getGasConfig(networkName: string): GasConfig {
-  const configs: Record<string, GasConfig> = {
-    hardhat: {
-      maxFeePerGas: '10',
-      maxPriorityFeePerGas: '1',
-    },
-    localhost: {
-      maxFeePerGas: '10',
-      maxPriorityFeePerGas: '1',
-    },
-    citrea: {
-      maxFeePerGas: '0.01',
-      maxPriorityFeePerGas: '0.001',
-    },
-    citreaTestnet: {
-      maxFeePerGas: '0.01',
-      maxPriorityFeePerGas: '0.001',
-    },
-  }
-
-  if (!configs[networkName]) {
-    console.warn(`Unknown network "${networkName}", falling back to citreaTestnet gas config`);
-  }
-  return configs[networkName] || configs.citreaTestnet;
-}
-
-// Validate all required addresses
-if (!process.env.JUSD_ADDRESS || !process.env.JUICE_ADDRESS || !process.env.FACTORY_ADDRESS || !process.env.SWAP_ROUTER_ADDRESS || !process.env.PROXY_ADMIN_ADDRESS) {
-  throw new Error('All governance addresses must be set in .env: JUSD_ADDRESS, JUICE_ADDRESS, FACTORY_ADDRESS, SWAP_ROUTER_ADDRESS, PROXY_ADMIN_ADDRESS')
-}
-
-// Now TypeScript knows these are defined
-const JUSD_ADDRESS = process.env.JUSD_ADDRESS
-const JUICE_ADDRESS = process.env.JUICE_ADDRESS
-const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS
-const SWAP_ROUTER_ADDRESS = process.env.SWAP_ROUTER_ADDRESS
-const PROXY_ADMIN_ADDRESS = process.env.PROXY_ADMIN_ADDRESS
+const PROXY_ADMIN_ADDRESS = process.env.PROXY_ADMIN_ADDRESS;
 
 async function main() {
-  console.log('🏛️  Deploying JuiceSwap Governance')
-  console.log('===================================\n')
+  console.log("========================================");
+  console.log("   JuiceSwap Governance Deployment     ");
+  console.log("========================================\n");
 
-  // Get signer and network info
-  const [deployer] = await ethers.getSigners()
-  const network = await ethers.provider.getNetwork()
+  // ============================================
+  // 1. SETUP & VALIDATION
+  // ============================================
 
-  // Network configuration mapping
-  const NETWORK_CONFIG: Record<string, { name: string; folder: string }> = {
-    '5115': { name: 'Citrea Testnet', folder: 'testnet' },
-    '62831': { name: 'Citrea Mainnet', folder: 'mainnet' },
+  const [deployer] = await ethers.getSigners();
+  const network = await ethers.provider.getNetwork();
+  const networkConfig = getNetworkConfig(hardhatNetwork.name);
+  const gasConfig = getGasConfig(hardhatNetwork.name);
+  const confirmations = getConfirmations(hardhatNetwork.name);
+
+  console.log(`📍 Network: ${networkConfig.name} (Chain ID: ${network.chainId})`);
+  console.log(`👤 Deployer: ${deployer.address}`);
+  console.log(`⏳ Confirmations: ${confirmations}`);
+  console.log("");
+
+  // ============================================
+  // Get addresses from canonical packages
+  // ============================================
+  const chainIdNum = Number(network.chainId);
+
+  // Validate chain is supported by JuiceDollar
+  const juiceDollarAddresses = ADDRESS[chainIdNum];
+  if (!juiceDollarAddresses) {
+    throw new Error(
+      `❌ Chain ${chainIdNum} not supported by @juicedollar/jusd.\n` +
+      `   Supported chains: ${Object.keys(ADDRESS).join(", ")}`
+    );
   }
 
-  const chainIdStr = network.chainId.toString()
-  const { name: networkName, folder: deploymentFolder } =
-    NETWORK_CONFIG[chainIdStr] || { name: 'Localhost', folder: 'localhost' }
+  // Validate chain is supported by SDK
+  // Type assertion needed because CHAIN_TO_ADDRESSES_MAP doesn't include all ChainId values
+  const dexAddresses = CHAIN_TO_ADDRESSES_MAP[chainIdNum as keyof typeof CHAIN_TO_ADDRESSES_MAP];
+  if (!dexAddresses) {
+    throw new Error(
+      `❌ Chain ${chainIdNum} not supported by @juiceswapxyz/sdk-core.`
+    );
+  }
 
-  console.log('📍 Deployer:', deployer.address)
-  console.log('⛓️  Network:', networkName, `(Chain ID: ${network.chainId})`)
-  console.log('')
+  // Import addresses from packages (single source of truth)
+  const JUSD_ADDRESS = juiceDollarAddresses.juiceDollar;
+  const JUICE_ADDRESS = juiceDollarAddresses.equity;
+  const FACTORY_ADDRESS = V3_CORE_FACTORY_ADDRESSES[chainIdNum as keyof typeof V3_CORE_FACTORY_ADDRESSES];
+  const SWAP_ROUTER_ADDRESS = dexAddresses.swapRouter02Address;
 
-  console.log('📦 V3 Contracts:')
-  console.log('   Factory:', FACTORY_ADDRESS)
-  console.log('   SwapRouter:', SWAP_ROUTER_ADDRESS)
-  console.log('   ProxyAdmin:', PROXY_ADMIN_ADDRESS)
-  console.log('')
+  // Validate all addresses are defined
+  if (!FACTORY_ADDRESS) {
+    throw new Error(`❌ Factory not defined for chain ${chainIdNum}`);
+  }
+  if (!SWAP_ROUTER_ADDRESS) {
+    throw new Error(`❌ SwapRouter not defined for chain ${chainIdNum}`);
+  }
 
-  console.log('🪙 JUICE/JUSD Integration:')
-  console.log('   JUSD:', JUSD_ADDRESS)
-  console.log('   JUICE:', JUICE_ADDRESS)
-  console.log('')
+  console.log("📦 Addresses from packages (single source of truth):");
+  console.log(`   JUSD:        ${JUSD_ADDRESS} (from @juicedollar/jusd)`);
+  console.log(`   JUICE:       ${JUICE_ADDRESS} (from @juicedollar/jusd)`);
+  console.log(`   Factory:     ${FACTORY_ADDRESS} (from @juiceswapxyz/sdk-core)`);
+  console.log(`   SwapRouter:  ${SWAP_ROUTER_ADDRESS} (from @juiceswapxyz/sdk-core)`);
+  console.log("");
 
-  // Check balance
-  const provider = ethers.provider
-  const balance = await provider.getBalance(deployer.address)
-  console.log('💰 Deployer Balance:', ethers.formatEther(balance), 'cBTC\n')
+  console.log("📋 From .env (governance-specific):");
+  console.log(`   ProxyAdmin:  ${PROXY_ADMIN_ADDRESS}`);
+  console.log("");
 
-  const isLocal = hardhatNetwork.name === 'hardhat' || hardhatNetwork.name === 'localhost';
-  const confirmations = isLocal ? 1 : 6;
-  console.log(`⏳ Using ${confirmations} confirmation${confirmations > 1 ? 's' : ''} for transactions\n`)
+  // ============================================
+  // 2. VALIDATE DEPENDENCY CONTRACTS
+  // ============================================
 
-  const gasConfig = getGasConfig(hardhatNetwork.name)
+  console.log("🔍 Validating dependency contracts...");
 
-  // Step 1: Deploy JuiceSwapGovernor
-  console.log('📝 Step 1: Deploying JuiceSwapGovernor...')
+  await validateContractDeployed(JUSD_ADDRESS, "JUSD");
+  console.log(`   ✅ JUSD: ${JUSD_ADDRESS}`);
 
-  const JuiceSwapGovernorFactory = await ethers.getContractFactory('JuiceSwapGovernor')
+  await validateContractDeployed(JUICE_ADDRESS, "JUICE");
+  console.log(`   ✅ JUICE: ${JUICE_ADDRESS}`);
+
+  await validateContractDeployed(FACTORY_ADDRESS, "Factory");
+  console.log(`   ✅ Factory: ${FACTORY_ADDRESS}`);
+
+  await validateContractDeployed(SWAP_ROUTER_ADDRESS, "SwapRouter");
+  console.log(`   ✅ SwapRouter: ${SWAP_ROUTER_ADDRESS}`);
+
+  await validateContractDeployed(PROXY_ADMIN_ADDRESS, "ProxyAdmin");
+  console.log(`   ✅ ProxyAdmin: ${PROXY_ADMIN_ADDRESS}`);
+  console.log("");
+
+  // ============================================
+  // 3. ESTIMATE GAS & VALIDATE BALANCE
+  // ============================================
+
+  console.log("💰 Checking deployer balance...");
+
+  // Estimate gas for both deployments + ownership transfers
+  // Governor: ~1.5M gas, FeeCollector: ~2.5M gas, transfers: ~0.2M each
+  const estimatedTotalGas = 5000000n; // 5M gas total estimate
+  const maxFeePerGas = ethers.parseUnits(gasConfig.maxFeePerGas, "gwei");
+  const estimatedCost = estimatedTotalGas * maxFeePerGas;
+
+  await validateMinimumBalance(deployer.address, estimatedCost);
+
+  // ============================================
+  // 4. DEPLOY JUICESWAP GOVERNOR
+  // ============================================
+
+  console.log("📝 Step 1: Deploying JuiceSwapGovernor...");
+
+  const JuiceSwapGovernorFactory = await ethers.getContractFactory("JuiceSwapGovernor");
+  const governorArgs = [JUSD_ADDRESS, JUICE_ADDRESS];
+
   const governor = await JuiceSwapGovernorFactory.deploy(
-    JUSD_ADDRESS,
-    JUICE_ADDRESS,
-    {
-      gasLimit: 2000000,
-      maxFeePerGas: ethers.parseUnits(gasConfig.maxFeePerGas, 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits(gasConfig.maxPriorityFeePerGas, 'gwei')
-    }
-  )
-  await governor.waitForDeployment()
-  await governor.deploymentTransaction()?.wait(confirmations)
+    ...governorArgs,
+    formatGasOverrides(gasConfig, 2000000)
+  );
 
-  const governorAddress = await governor.getAddress()
-  console.log('✅ JuiceSwapGovernor deployed at:', governorAddress)
-  console.log('   Tx Hash:', governor.deploymentTransaction()?.hash)
-  console.log('')
+  console.log(`   ⏳ Waiting for deployment transaction...`);
+  await governor.waitForDeployment();
 
-  // Step 1b: Deploy JuiceSwapFeeCollector
-  console.log('📝 Step 1b: Deploying JuiceSwapFeeCollector...')
+  const governorTx = governor.deploymentTransaction();
+  console.log(`   📝 Tx Hash: ${governorTx?.hash}`);
 
-  const JuiceSwapFeeCollectorFactory = await ethers.getContractFactory('JuiceSwapFeeCollector')
+  console.log(`   ⏳ Waiting for ${confirmations} confirmation(s)...`);
+  await governorTx?.wait(confirmations);
 
-  const feeCollector = await JuiceSwapFeeCollectorFactory.deploy(
+  const governorAddress = await governor.getAddress();
+  printDeploymentSummary("JuiceSwapGovernor", governorAddress, networkConfig, governorTx?.hash);
+
+  // ============================================
+  // 5. DEPLOY JUICESWAP FEE COLLECTOR
+  // ============================================
+
+  console.log("\n📝 Step 2: Deploying JuiceSwapFeeCollector...");
+
+  const JuiceSwapFeeCollectorFactory = await ethers.getContractFactory("JuiceSwapFeeCollector");
+  const feeCollectorArgs = [
     JUSD_ADDRESS,
     JUICE_ADDRESS,
     SWAP_ROUTER_ADDRESS,
     FACTORY_ADDRESS,
-    governorAddress,  // Governor owns FeeCollector
-    {
-      gasLimit: 3000000,
-      maxFeePerGas: ethers.parseUnits(gasConfig.maxFeePerGas, 'gwei'),
-      maxPriorityFeePerGas: ethers.parseUnits(gasConfig.maxPriorityFeePerGas, 'gwei')
-    }
-  )
-  await feeCollector.waitForDeployment()
-  await feeCollector.deploymentTransaction()?.wait(confirmations)
+    governorAddress, // Governor owns FeeCollector
+  ];
 
-  const feeCollectorAddress = await feeCollector.getAddress()
-  console.log('✅ JuiceSwapFeeCollector deployed at:', feeCollectorAddress)
-  console.log('   Tx Hash:', feeCollector.deploymentTransaction()?.hash)
-  console.log('')
+  const feeCollector = await JuiceSwapFeeCollectorFactory.deploy(
+    ...feeCollectorArgs,
+    formatGasOverrides(gasConfig, 3000000)
+  );
 
-  // Step 2: Transfer Factory Ownership to Governor
-  console.log('📝 Step 2: Transferring Factory ownership to Governor...')
+  console.log(`   ⏳ Waiting for deployment transaction...`);
+  await feeCollector.waitForDeployment();
+
+  const feeCollectorTx = feeCollector.deploymentTransaction();
+  console.log(`   📝 Tx Hash: ${feeCollectorTx?.hash}`);
+
+  console.log(`   ⏳ Waiting for ${confirmations} confirmation(s)...`);
+  await feeCollectorTx?.wait(confirmations);
+
+  const feeCollectorAddress = await feeCollector.getAddress();
+  printDeploymentSummary("JuiceSwapFeeCollector", feeCollectorAddress, networkConfig, feeCollectorTx?.hash);
+
+  // ============================================
+  // 6. TRANSFER FACTORY OWNERSHIP
+  // ============================================
+
+  console.log("\n📝 Step 3: Transferring Factory ownership to Governor...");
 
   const factoryABI = [
-    'function owner() view returns (address)',
-    'function setOwner(address _owner)'
-  ]
-  
-  const factoryCode = await provider.getCode(FACTORY_ADDRESS)
-  if (factoryCode === '0x') {
-    console.log('❌ No contract at Factory address. Deploy DEX first or use persistent hardhat node.')
-    process.exit(1)
-  }
-  
-  const factoryContract = new ethers.Contract(FACTORY_ADDRESS, factoryABI, deployer)
-  const currentFactoryOwner = await factoryContract.owner()
-  console.log('   Current Factory Owner:', currentFactoryOwner)
+    "function owner() view returns (address)",
+    "function setOwner(address _owner)",
+  ];
+
+  const factoryContract = new ethers.Contract(FACTORY_ADDRESS, factoryABI, deployer);
+  const currentFactoryOwner = await factoryContract.owner();
+  console.log(`   Current Factory Owner: ${currentFactoryOwner}`);
 
   if (currentFactoryOwner !== deployer.address) {
-    console.log('⚠️  Warning: Deployer is not Factory owner!')
-    console.log('   You need to run this script with the current owner\'s private key\n')
+    console.log("   ⚠️  Warning: Deployer is not Factory owner!");
+    console.log("   Skipping Factory ownership transfer.\n");
   } else {
     const setOwnerTx = await factoryContract.setOwner(
       governorAddress,
-      {
-        gasLimit: 200000,
-        maxFeePerGas: ethers.parseUnits(gasConfig.maxFeePerGas, 'gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits(gasConfig.maxPriorityFeePerGas, 'gwei')
-      }
-    )
-    await setOwnerTx.wait(confirmations)
-    console.log('✅ Factory ownership transferred to Governor')
-    console.log('   Tx Hash:', setOwnerTx.hash)
-    console.log('')
+      formatGasOverrides(gasConfig, 200000)
+    );
+    console.log(`   📝 Tx Hash: ${setOwnerTx.hash}`);
+    await setOwnerTx.wait(confirmations);
+    console.log("   ✅ Factory ownership transferred to Governor\n");
   }
 
-  // Step 3: Transfer ProxyAdmin Ownership to Governor
-  console.log('📝 Step 3: Transferring ProxyAdmin ownership to Governor...')
+  // ============================================
+  // 7. TRANSFER PROXYADMIN OWNERSHIP
+  // ============================================
+
+  console.log("📝 Step 4: Transferring ProxyAdmin ownership to Governor...");
 
   const proxyAdminABI = [
-    'function owner() view returns (address)',
-    'function transferOwnership(address newOwner)'
-  ]
-  const proxyAdmin = new ethers.Contract(PROXY_ADMIN_ADDRESS, proxyAdminABI, deployer)
+    "function owner() view returns (address)",
+    "function transferOwnership(address newOwner)",
+  ];
 
-  const currentProxyOwner = await proxyAdmin.owner()
-  console.log('   Current ProxyAdmin Owner:', currentProxyOwner)
+  const proxyAdmin = new ethers.Contract(PROXY_ADMIN_ADDRESS, proxyAdminABI, deployer);
+  const currentProxyOwner = await proxyAdmin.owner();
+  console.log(`   Current ProxyAdmin Owner: ${currentProxyOwner}`);
 
   if (currentProxyOwner !== deployer.address) {
-    console.log('⚠️  Warning: Deployer is not ProxyAdmin owner!')
-    console.log('   You need to run this script with the current owner\'s private key\n')
+    console.log("   ⚠️  Warning: Deployer is not ProxyAdmin owner!");
+    console.log("   Skipping ProxyAdmin ownership transfer.\n");
   } else {
     const transferOwnershipTx = await proxyAdmin.transferOwnership(
       governorAddress,
-      {
-        gasLimit: 200000,
-        maxFeePerGas: ethers.parseUnits(gasConfig.maxFeePerGas, 'gwei'),
-        maxPriorityFeePerGas: ethers.parseUnits(gasConfig.maxPriorityFeePerGas, 'gwei')
-      }
-    )
-    await transferOwnershipTx.wait(confirmations)
-    console.log('✅ ProxyAdmin ownership transferred to Governor')
-    console.log('   Tx Hash:', transferOwnershipTx.hash)
-    console.log('')
+      formatGasOverrides(gasConfig, 200000)
+    );
+    console.log(`   📝 Tx Hash: ${transferOwnershipTx.hash}`);
+    await transferOwnershipTx.wait(confirmations);
+    console.log("   ✅ ProxyAdmin ownership transferred to Governor\n");
   }
 
-  // Step 4: Verify ownership transfer
-  console.log('📝 Step 4: Verifying ownership transfer...\n')
+  // ============================================
+  // 8. VERIFY OWNERSHIP TRANSFERS
+  // ============================================
 
-  const newFactoryOwner = await factoryContract.owner()
-  const newProxyOwner = await proxyAdmin.owner()
+  console.log("📝 Step 5: Verifying ownership transfers...\n");
 
-  console.log('🔍 Final Ownership:')
-  console.log('   Factory Owner:', newFactoryOwner)
-  console.log('   ProxyAdmin Owner:', newProxyOwner)
-  console.log('   Governor Address:', governorAddress)
-  console.log('   FeeCollector Owner:', await feeCollector.owner())
-  console.log('')
+  const newFactoryOwner = await factoryContract.owner();
+  const newProxyOwner = await proxyAdmin.owner();
+  const feeCollectorOwner = await feeCollector.owner();
 
-  if (newFactoryOwner === governorAddress && newProxyOwner === governorAddress) {
-    console.log('✅ All ownership successfully transferred to Governor!')
+  console.log("🔍 Final Ownership:");
+  console.log(`   Factory Owner:      ${newFactoryOwner}`);
+  console.log(`   ProxyAdmin Owner:   ${newProxyOwner}`);
+  console.log(`   FeeCollector Owner: ${feeCollectorOwner}`);
+  console.log(`   Governor Address:   ${governorAddress}`);
+
+  const ownershipComplete =
+    newFactoryOwner === governorAddress && newProxyOwner === governorAddress;
+
+  if (ownershipComplete) {
+    console.log("\n   ✅ All ownership successfully transferred to Governor!");
   } else {
-    console.log('⚠️  Warning: Ownership transfer incomplete!')
+    console.log("\n   ⚠️  Warning: Ownership transfer incomplete!");
   }
 
-  const blockNumber = await ethers.provider.getBlockNumber()
+  // ============================================
+  // 9. SAVE DEPLOYMENT FILE
+  // ============================================
+
+  const blockNumber = await ethers.provider.getBlockNumber();
+
   const governanceState = {
-    schemaVersion: '1.0',
+    schemaVersion: "1.0",
     network: {
-      name: networkName,
-      chainId: Number(network.chainId)
+      name: networkConfig.name,
+      chainId: Number(network.chainId),
     },
     deployment: {
       deployedAt: new Date().toISOString(),
       deployedBy: deployer.address,
-      blockNumber: blockNumber
+      blockNumber: blockNumber,
     },
     contracts: {
       JuiceSwapGovernor: {
         address: governorAddress,
-        deploymentTx: governor.deploymentTransaction()?.hash,
-        constructorArgs: [JUSD_ADDRESS, JUICE_ADDRESS]
+        deploymentTx: governorTx?.hash,
+        constructorArgs: governorArgs,
       },
       JuiceSwapFeeCollector: {
         address: feeCollectorAddress,
-        deploymentTx: feeCollector.deploymentTransaction()?.hash,
-        constructorArgs: [JUSD_ADDRESS, JUICE_ADDRESS, SWAP_ROUTER_ADDRESS, FACTORY_ADDRESS, governorAddress]
-      }
+        deploymentTx: feeCollectorTx?.hash,
+        constructorArgs: feeCollectorArgs,
+      },
     },
     references: {
       jusdAddress: JUSD_ADDRESS,
       juiceAddress: JUICE_ADDRESS,
       factoryAddress: FACTORY_ADDRESS,
       proxyAdminAddress: PROXY_ADMIN_ADDRESS,
-      swapRouterAddress: SWAP_ROUTER_ADDRESS
+      swapRouterAddress: SWAP_ROUTER_ADDRESS,
+    },
+    ownershipStatus: {
+      factoryTransferred: newFactoryOwner === governorAddress,
+      proxyAdminTransferred: newProxyOwner === governorAddress,
     },
     metadata: {
-      deployer: 'JuiceSwapXyz/smart-contracts',
-      scriptVersion: '1.0.0'
-    }
+      deployer: "JuiceSwapXyz/smart-contracts",
+      scriptVersion: "2.0.0",
+    },
+  };
+
+  const deployDir = path.join(__dirname, "../deployments", networkConfig.folder);
+  fs.mkdirSync(deployDir, { recursive: true });
+  const governanceFile = path.join(deployDir, "governance.json");
+  fs.writeFileSync(governanceFile, JSON.stringify(governanceState, null, 2));
+  console.log(`\n📄 Governance deployment saved to: ${governanceFile}`);
+
+  // ============================================
+  // 10. VERIFY CONTRACTS
+  // ============================================
+
+  console.log("\n📝 Step 6: Verifying contracts on explorer...");
+
+  const governorVerified = await verifyContract(
+    governorAddress,
+    governorArgs,
+    "contracts/governance/JuiceSwapGovernor.sol:JuiceSwapGovernor"
+  );
+
+  const feeCollectorVerified = await verifyContract(
+    feeCollectorAddress,
+    feeCollectorArgs,
+    "contracts/governance/JuiceSwapFeeCollector.sol:JuiceSwapFeeCollector"
+  );
+
+  // ============================================
+  // 11. SUMMARY
+  // ============================================
+
+  console.log("\n========================================");
+  console.log("   Governance Deployment Complete!     ");
+  console.log("========================================\n");
+
+  console.log("📊 Deployed Contracts:");
+  console.log(`   Governor:     ${governorAddress}`);
+  console.log(`   FeeCollector: ${feeCollectorAddress}`);
+  console.log("");
+
+  console.log("📊 Verification Status:");
+  console.log(`   Governor:     ${governorVerified ? "✅ Verified" : "❌ Not verified"}`);
+  console.log(`   FeeCollector: ${feeCollectorVerified ? "✅ Verified" : "❌ Not verified"}`);
+  console.log("");
+
+  console.log("⚙️  Governance Parameters:");
+  console.log("   Proposal Fee:        1000 JUSD (goes to JUICE equity)");
+  console.log("   Application Period:  14 days minimum");
+  console.log("   Veto Quorum:         2% of JUICE voting power");
+  console.log("");
+
+  console.log("🤖 Fee Collection:");
+  console.log(`   FeeCollector:  ${feeCollectorAddress}`);
+  console.log("   Authorized:    Not set (use setAuthorizedCollector proposal)");
+  console.log(`   SwapRouter:    ${SWAP_ROUTER_ADDRESS}`);
+  console.log("   TWAP Period:   30 minutes");
+  console.log("   Max Slippage:  2%");
+  console.log("");
+
+  if (networkConfig.explorerUrl) {
+    console.log("🔗 Explorer Links:");
+    console.log(`   Governor:     ${networkConfig.explorerUrl}/address/${governorAddress}`);
+    console.log(`   FeeCollector: ${networkConfig.explorerUrl}/address/${feeCollectorAddress}`);
+    console.log("");
   }
 
-  const deployDir = path.join(__dirname, '../deployments', deploymentFolder)
-  fs.mkdirSync(deployDir, { recursive: true })
-  const governanceFile = path.join(deployDir, 'governance.json')
-  fs.writeFileSync(governanceFile, JSON.stringify(governanceState, null, 2))
-  console.log('\n📄 Governance deployment info saved to:', governanceFile)
-
-  // Print summary
-  console.log('\n🎉 Governance Deployment Complete!')
-  console.log('===================================\n')
-  console.log('📊 Summary:')
-  console.log('   Governor:', governorAddress)
-  console.log('   FeeCollector:', feeCollectorAddress)
-  console.log('   Factory:', FACTORY_ADDRESS)
-  console.log('   ProxyAdmin:', PROXY_ADMIN_ADDRESS)
-  console.log('')
-  console.log('⚙️  Governance Parameters:')
-  console.log('   Proposal Fee: 1000 JUSD (goes to JUICE equity)')
-  console.log('   Application Period: 14 days minimum')
-  console.log('   Veto Quorum: 2% of JUICE voting power')
-  console.log('')
-  console.log('🤖 Fee Collection:')
-  console.log('   Fee Collector Contract:', feeCollectorAddress)
-  console.log('   Keeper Address: Not set (use setFeeCollector proposal)')
-  console.log('   Swap Router:', SWAP_ROUTER_ADDRESS)
-  console.log('   TWAP Period: 30 minutes')
-  console.log('   Max Slippage: 2%')
-  console.log('   Frontrunning Protection: TWAP Oracle')
-  console.log('')
-  console.log('🔗 Explorer:')
-  console.log(`   Governor: https://explorer.citrea.xyz/address/${governorAddress}`)
-  console.log(`   FeeCollector: https://explorer.citrea.xyz/address/${feeCollectorAddress}`)
-  console.log('')
-  console.log('📘 Next Steps:')
-  console.log('   1. Verify both contracts on explorer')
-  console.log('   2. Create proposal to set fee collector keeper address')
-  console.log('   3. Setup keeper bot with private RPC')
-  console.log('   4. Announce governance transition to community')
-  console.log('')
+  console.log("📘 Next Steps:");
+  console.log("   1. Create proposal to set FeeCollector authorized address");
+  console.log("   2. Setup keeper bot with private RPC");
+  console.log("   3. Announce governance transition to community");
+  if (!governorVerified || !feeCollectorVerified) {
+    console.log("   4. Manually verify contracts if auto-verification failed");
+  }
+  console.log("");
 }
 
 main()
   .then(() => process.exit(0))
   .catch((error) => {
-    console.error('❌ Error:', error)
-    process.exit(1)
-  })
+    console.error("\n❌ Deployment failed:", error);
+    process.exit(1);
+  });
