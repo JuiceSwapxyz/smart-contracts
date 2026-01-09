@@ -15,31 +15,28 @@ import {
 } from "./utils/deploy-helpers";
 
 /**
- * Deploy JuiceSwapGovernor and JuiceSwapFeeCollector, then transfer
+ * Deploy JuiceSwapGovernor and JuiceSwapFeeCollector, optionally transferring
  * ownership of Factory and ProxyAdmin to the Governor.
  *
  * This script:
  * 1. Gets addresses from canonical packages (@juicedollar/jusd, @juiceswapxyz/sdk-core)
- * 2. Validates PROXY_ADMIN_ADDRESS from .env (governance-specific)
- * 3. Checks deployer balance
- * 4. Deploys JuiceSwapGovernor
- * 5. Deploys JuiceSwapFeeCollector (owned by Governor)
- * 6. Transfers Factory ownership to Governor
- * 7. Transfers ProxyAdmin ownership to Governor
- * 8. Saves deployment info to JSON
- * 9. Verifies both contracts on block explorer
+ * 2. Checks deployer balance
+ * 3. Deploys JuiceSwapGovernor
+ * 4. Deploys JuiceSwapFeeCollector (owned by Governor)
+ * 5. Optionally transfers Factory ownership to Governor (if TRANSFER_OWNERSHIP=true)
+ * 6. Optionally transfers ProxyAdmin ownership to Governor (if TRANSFER_OWNERSHIP=true)
+ * 7. Saves deployment info to JSON
+ * 8. Verifies both contracts on block explorer
+ *
+ * Environment variables:
+ * - TRANSFER_OWNERSHIP: Set to "true" to transfer Factory and ProxyAdmin ownership
+ *                       to the Governor. Default is "false" (no transfer).
  */
 
-// Only PROXY_ADMIN_ADDRESS remains in .env (governance-specific, not in packages)
-if (!process.env.PROXY_ADMIN_ADDRESS) {
-  throw new Error(
-    "Missing required environment variable: PROXY_ADMIN_ADDRESS\n\n" +
-    "This is the only address that must be set in .env.\n" +
-    "All other addresses are imported from packages."
-  );
-}
+// All addresses are now imported from packages - no .env required for addresses!
 
-const PROXY_ADMIN_ADDRESS = process.env.PROXY_ADMIN_ADDRESS;
+// Ownership transfer flag - default is false (deploy contracts only, no ownership transfer)
+const TRANSFER_OWNERSHIP = process.env.TRANSFER_OWNERSHIP?.toLowerCase() === "true";
 
 async function main() {
   console.log("========================================");
@@ -59,6 +56,7 @@ async function main() {
   console.log(`📍 Network: ${networkConfig.name} (Chain ID: ${network.chainId})`);
   console.log(`👤 Deployer: ${deployer.address}`);
   console.log(`⏳ Confirmations: ${confirmations}`);
+  console.log(`🔐 Transfer Ownership: ${TRANSFER_OWNERSHIP ? "YES" : "NO (deploy only)"}`);
   console.log("");
 
   // ============================================
@@ -89,6 +87,7 @@ async function main() {
   const JUICE_ADDRESS = juiceDollarAddresses.equity;
   const FACTORY_ADDRESS = V3_CORE_FACTORY_ADDRESSES[chainIdNum as keyof typeof V3_CORE_FACTORY_ADDRESSES];
   const SWAP_ROUTER_ADDRESS = dexAddresses.swapRouter02Address;
+  const PROXY_ADMIN_ADDRESS = dexAddresses.proxyAdminAddress;
 
   // Validate all addresses are defined
   if (!FACTORY_ADDRESS) {
@@ -97,16 +96,16 @@ async function main() {
   if (!SWAP_ROUTER_ADDRESS) {
     throw new Error(`❌ SwapRouter not defined for chain ${chainIdNum}`);
   }
+  if (!PROXY_ADMIN_ADDRESS) {
+    throw new Error(`❌ ProxyAdmin not defined for chain ${chainIdNum}`);
+  }
 
   console.log("📦 Addresses from packages (single source of truth):");
   console.log(`   JUSD:        ${JUSD_ADDRESS} (from @juicedollar/jusd)`);
   console.log(`   JUICE:       ${JUICE_ADDRESS} (from @juicedollar/jusd)`);
   console.log(`   Factory:     ${FACTORY_ADDRESS} (from @juiceswapxyz/sdk-core)`);
   console.log(`   SwapRouter:  ${SWAP_ROUTER_ADDRESS} (from @juiceswapxyz/sdk-core)`);
-  console.log("");
-
-  console.log("📋 From .env (governance-specific):");
-  console.log(`   ProxyAdmin:  ${PROXY_ADMIN_ADDRESS}`);
+  console.log(`   ProxyAdmin:  ${PROXY_ADMIN_ADDRESS} (from @juiceswapxyz/sdk-core)`);
   console.log("");
 
   // ============================================
@@ -204,10 +203,10 @@ async function main() {
   printDeploymentSummary("JuiceSwapFeeCollector", feeCollectorAddress, networkConfig, feeCollectorTx?.hash);
 
   // ============================================
-  // 6. TRANSFER FACTORY OWNERSHIP
+  // 6. TRANSFER FACTORY OWNERSHIP (if enabled)
   // ============================================
 
-  console.log("\n📝 Step 3: Transferring Factory ownership to Governor...");
+  console.log("\n📝 Step 3: Factory ownership...");
 
   const factoryABI = [
     "function owner() view returns (address)",
@@ -218,7 +217,9 @@ async function main() {
   const currentFactoryOwner = await factoryContract.owner();
   console.log(`   Current Factory Owner: ${currentFactoryOwner}`);
 
-  if (currentFactoryOwner !== deployer.address) {
+  if (!TRANSFER_OWNERSHIP) {
+    console.log("   ⏭️  Skipping ownership transfer (TRANSFER_OWNERSHIP=false)\n");
+  } else if (currentFactoryOwner !== deployer.address) {
     console.log("   ⚠️  Warning: Deployer is not Factory owner!");
     console.log("   Skipping Factory ownership transfer.\n");
   } else {
@@ -232,10 +233,10 @@ async function main() {
   }
 
   // ============================================
-  // 7. TRANSFER PROXYADMIN OWNERSHIP
+  // 7. TRANSFER PROXYADMIN OWNERSHIP (if enabled)
   // ============================================
 
-  console.log("📝 Step 4: Transferring ProxyAdmin ownership to Governor...");
+  console.log("📝 Step 4: ProxyAdmin ownership...");
 
   const proxyAdminABI = [
     "function owner() view returns (address)",
@@ -246,7 +247,9 @@ async function main() {
   const currentProxyOwner = await proxyAdmin.owner();
   console.log(`   Current ProxyAdmin Owner: ${currentProxyOwner}`);
 
-  if (currentProxyOwner !== deployer.address) {
+  if (!TRANSFER_OWNERSHIP) {
+    console.log("   ⏭️  Skipping ownership transfer (TRANSFER_OWNERSHIP=false)\n");
+  } else if (currentProxyOwner !== deployer.address) {
     console.log("   ⚠️  Warning: Deployer is not ProxyAdmin owner!");
     console.log("   Skipping ProxyAdmin ownership transfer.\n");
   } else {
