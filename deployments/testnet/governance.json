@@ -5,40 +5,44 @@
     "chainId": 5115
   },
   "deployment": {
-    "deployedAt": "2025-11-08T02:03:38.089Z",
+    "deployedAt": "2026-01-09T14:04:44.886Z",
     "deployedBy": "0xE399782Fe2B0aBb138926b14261F49473b4881A3",
-    "blockNumber": 17882977
+    "blockNumber": 20579346
   },
   "contracts": {
     "JuiceSwapGovernor": {
-      "address": "0x2F533f8296441440D38DD9e19B70923acC611A5D",
-      "deploymentTx": "0x742d9981199f1dd83e3a81343043b03a36c67f857dbaf089503bc5fe54a0a887",
+      "address": "0x205903c54C56bCED8C97f2DC250BA53d715174e9",
+      "deploymentTx": "0x212e951c1aab451e326a0844cfd5a85ac43ba517e0166e74816ebdceab872be0",
       "constructorArgs": [
-        "0x1Dd3057888944ff1f914626aB4BD47Dc8b6285Fe",
-        "0xD82010E94737A4E4C3fc26314326Ff606E2Dcdf4"
+        "0xFdB0a83d94CD65151148a131167Eb499Cb85d015",
+        "0x7b2A560bf72B0Dd2EAbE3271F829C2597c8420d5"
       ]
     },
     "JuiceSwapFeeCollector": {
-      "address": "0xAdDd2A976E9e9f5cd50A9023A540D9f9F51f47eF",
-      "deploymentTx": "0xedba232fce270be766701a89ac2b6ca9b4a9378b1d97a68c0345f25f1e7f2789",
+      "address": "0xc3d817C394d55aB57f5bF0Fc5C6878ccE033E32a",
+      "deploymentTx": "0x86ce35d2801036183c6cfbfff9a163ae46881ad9905c3db8de1c552c38ca08fa",
       "constructorArgs": [
-        "0x1Dd3057888944ff1f914626aB4BD47Dc8b6285Fe",
-        "0xD82010E94737A4E4C3fc26314326Ff606E2Dcdf4",
-        "0x5cacB7a81694E534e6EB03eB4598791f84E2a902",
-        "0x3Ff0EE03E31DcB74c00bCf79558905cC2cf1459B",
-        "0x2F533f8296441440D38DD9e19B70923acC611A5D"
+        "0xFdB0a83d94CD65151148a131167Eb499Cb85d015",
+        "0x7b2A560bf72B0Dd2EAbE3271F829C2597c8420d5",
+        "0x2d11a82633adD5b8742311fDa0E751264d093E7f",
+        "0x9136D17Ec096AAd031D442a796cd5984128cF0b2",
+        "0x205903c54C56bCED8C97f2DC250BA53d715174e9"
       ]
     }
   },
   "references": {
-    "jusdAddress": "0x1Dd3057888944ff1f914626aB4BD47Dc8b6285Fe",
-    "juiceAddress": "0xD82010E94737A4E4C3fc26314326Ff606E2Dcdf4",
-    "factoryAddress": "0x3Ff0EE03E31DcB74c00bCf79558905cC2cf1459B",
-    "proxyAdminAddress": "0x4e20Ec7daaaeA8B135bf825556Bd70C062D0ee09",
-    "swapRouterAddress": "0x5cacB7a81694E534e6EB03eB4598791f84E2a902"
+    "jusdAddress": "0xFdB0a83d94CD65151148a131167Eb499Cb85d015",
+    "juiceAddress": "0x7b2A560bf72B0Dd2EAbE3271F829C2597c8420d5",
+    "factoryAddress": "0x9136D17Ec096AAd031D442a796cd5984128cF0b2",
+    "proxyAdminAddress": "0xBc6dD1660166C63bd41ec6943E4Ab81fA327B821",
+    "swapRouterAddress": "0x2d11a82633adD5b8742311fDa0E751264d093E7f"
+  },
+  "ownershipStatus": {
+    "factoryTransferred": false,
+    "proxyAdminTransferred": false
   },
   "metadata": {
     "deployer": "JuiceSwapXyz/smart-contracts",
-    "scriptVersion": "1.0.0"
+    "scriptVersion": "2.0.0"
   }
 }
