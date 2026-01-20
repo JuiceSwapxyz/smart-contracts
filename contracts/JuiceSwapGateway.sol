@@ -275,9 +275,12 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         (address actualTokenA, uint256 actualAmountADesired) = _handleTokenIn(tokenA, amountADesired);
         (address actualTokenB, uint256 actualAmountBDesired) = _handleTokenIn(tokenB, amountBDesired);
 
+        // Cache token ordering comparison (JUICE1-11 fix)
+        bool isAToken0 = actualTokenA < actualTokenB;
+
         // Ensure token0 < token1 (Uniswap V3 requirement)
         (address token0, address token1, uint256 amount0Desired, uint256 amount1Desired) =
-            actualTokenA < actualTokenB
+            isAToken0
                 ? (actualTokenA, actualTokenB, actualAmountADesired, actualAmountBDesired)
                 : (actualTokenB, actualTokenA, actualAmountBDesired, actualAmountADesired);
 
@@ -286,7 +289,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         uint256 actualAmountBMin = tokenB == address(JUSD) ? _jusdToSvJusdAmount(amountBMin) : amountBMin;
 
         (uint256 amount0Min, uint256 amount1Min) =
-            actualTokenA < actualTokenB
+            isAToken0
                 ? (actualAmountAMin, actualAmountBMin)
                 : (actualAmountBMin, actualAmountAMin);
 
@@ -309,14 +312,14 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         (uint256 tokenId, , uint256 amount0, uint256 amount1) = POSITION_MANAGER.mint(params);
 
         // Map back to A/B order
-        (amountA, amountB) = actualTokenA < actualTokenB ? (amount0, amount1) : (amount1, amount0);
+        (amountA, amountB) = isAToken0 ? (amount0, amount1) : (amount1, amount0);
         liquidity = tokenId; // Return NFT tokenId as "liquidity"
 
         // Return excess tokens to user
-        uint256 excessA = actualTokenA < actualTokenB
+        uint256 excessA = isAToken0
             ? (amount0Desired > amount0 ? amount0Desired - amount0 : 0)
             : (amount1Desired > amount1 ? amount1Desired - amount1 : 0);
-        uint256 excessB = actualTokenA < actualTokenB
+        uint256 excessB = isAToken0
             ? (amount1Desired > amount1 ? amount1Desired - amount1 : 0)
             : (amount0Desired > amount0 ? amount0Desired - amount0 : 0);
 
