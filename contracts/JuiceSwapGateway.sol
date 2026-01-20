@@ -28,7 +28,6 @@ interface ISwapRouter {
         address tokenOut;
         uint24 fee;
         address recipient;
-        uint256 deadline;
         uint256 amountIn;
         uint256 amountOutMinimum;
         uint160 sqrtPriceLimitX96;
@@ -39,7 +38,6 @@ interface ISwapRouter {
     struct ExactInputParams {
         bytes path;
         address recipient;
-        uint256 deadline;
         uint256 amountIn;
         uint256 amountOutMinimum;
     }
@@ -217,7 +215,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     ) external payable nonReentrant whenNotPaused returns (uint256 amountOut) {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (amountIn == 0) revert InvalidAmount();
-        if (fee >= 1_000_000) revert InvalidFee(fee);
+
+        // Use defaultFee when fee is 0 (JUICE1-6 fix)
+        uint24 effectiveFee = fee == 0 ? defaultFee : fee;
+        if (effectiveFee >= 1_000_000) revert InvalidFee(effectiveFee);
 
         // Step 1: Handle input token conversion
         (address actualTokenIn, uint256 actualAmountIn) = _handleTokenIn(tokenIn, amountIn);
@@ -229,9 +230,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
             tokenIn: actualTokenIn,
             tokenOut: actualTokenOut,
-            fee: fee,
+            fee: effectiveFee,
             recipient: address(this),
-            deadline: deadline,
             amountIn: actualAmountIn,
             amountOutMinimum: 0, // Slippage checked after conversions
             sqrtPriceLimitX96: 0
@@ -265,13 +265,19 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     ) external payable nonReentrant whenNotPaused returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
         if (block.timestamp > deadline) revert DeadlineExpired();
 
+        // Use defaultFee when fee is 0 (JUICE1-6 fix)
+        uint24 effectiveFee = fee == 0 ? defaultFee : fee;
+
         // Convert input tokens
         (address actualTokenA, uint256 actualAmountADesired) = _handleTokenIn(tokenA, amountADesired);
         (address actualTokenB, uint256 actualAmountBDesired) = _handleTokenIn(tokenB, amountBDesired);
 
+        // Cache token ordering comparison (JUICE1-11 fix)
+        bool isAToken0 = actualTokenA < actualTokenB;
+
         // Ensure token0 < token1 (Uniswap V3 requirement)
         (address token0, address token1, uint256 amount0Desired, uint256 amount1Desired) =
-            actualTokenA < actualTokenB
+            isAToken0
                 ? (actualTokenA, actualTokenB, actualAmountADesired, actualAmountBDesired)
                 : (actualTokenB, actualTokenA, actualAmountBDesired, actualAmountADesired);
 
@@ -280,16 +286,16 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         uint256 actualAmountBMin = tokenB == address(JUSD) ? _jusdToSvJusdAmount(amountBMin) : amountBMin;
 
         (uint256 amount0Min, uint256 amount1Min) =
-            actualTokenA < actualTokenB
+            isAToken0
                 ? (actualAmountAMin, actualAmountBMin)
                 : (actualAmountBMin, actualAmountAMin);
 
-        (int24 tickLower, int24 tickUpper) = _getFullRangeTicks(fee);
+        (int24 tickLower, int24 tickUpper) = _getFullRangeTicks(effectiveFee);
 
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
             token0: token0,
             token1: token1,
-            fee: fee,
+            fee: effectiveFee,
             tickLower: tickLower,
             tickUpper: tickUpper,
             amount0Desired: amount0Desired,
@@ -303,14 +309,14 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         (uint256 tokenId, , uint256 amount0, uint256 amount1) = POSITION_MANAGER.mint(params);
 
         // Map back to A/B order
-        (amountA, amountB) = actualTokenA < actualTokenB ? (amount0, amount1) : (amount1, amount0);
+        (amountA, amountB) = isAToken0 ? (amount0, amount1) : (amount1, amount0);
         liquidity = tokenId; // Return NFT tokenId as "liquidity"
 
         // Return excess tokens to user
-        uint256 excessA = actualTokenA < actualTokenB
+        uint256 excessA = isAToken0
             ? (amount0Desired > amount0 ? amount0Desired - amount0 : 0)
             : (amount1Desired > amount1 ? amount1Desired - amount1 : 0);
-        uint256 excessB = actualTokenA < actualTokenB
+        uint256 excessB = isAToken0
             ? (amount1Desired > amount1 ? amount1Desired - amount1 : 0)
             : (amount0Desired > amount0 ? amount0Desired - amount0 : 0);
 
@@ -390,6 +396,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         // Convert back to user-facing tokens
         amountA = _handleTokenOut(tokenA, actualAmountA, to);
         amountB = _handleTokenOut(tokenB, actualAmountB, to);
+
+        // Verify final amounts meet user's minimums after all conversions (JUICE1-4 fix)
+        if (amountA < amountAMin) revert InsufficientOutput();
+        if (amountB < amountBMin) revert InsufficientOutput();
 
         // Return NFT to user
         IERC721(address(POSITION_MANAGER)).safeTransferFrom(address(this), msg.sender, tokenId);
@@ -544,6 +554,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
      */
     function setDefaultFee(uint24 newFee) external onlyOwner {
         if (newFee >= 1_000_000) revert InvalidFee(newFee);
+        // Verify fee tier is enabled in factory (JUICE1-7 fix)
+        int24 tickSpacing = FACTORY.feeAmountTickSpacing(newFee);
+        if (tickSpacing == 0) revert InvalidFee(newFee);
+
         uint24 oldFee = defaultFee;
         defaultFee = newFee;
         emit DefaultFeeUpdated(oldFee, newFee);
