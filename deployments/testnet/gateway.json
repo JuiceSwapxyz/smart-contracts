@@ -5,14 +5,14 @@
     "chainId": 5115
   },
   "deployment": {
-    "deployedAt": "2026-01-09T14:01:57.571Z",
+    "deployedAt": "2026-01-19T18:57:43.542Z",
     "deployedBy": "0xE399782Fe2B0aBb138926b14261F49473b4881A3",
-    "blockNumber": 20579262
+    "blockNumber": 21020062
   },
   "contracts": {
     "JuiceSwapGateway": {
-      "address": "0xAa38DF03b3B62195723ED15987D58D835D7049F5",
-      "deploymentTx": "0x3d757b01b7b36b50fbba4287b5831d2eb7ed031761451156a4857fc995b2ab49",
+      "address": "0x44B89B1a71f72aB6FeFa807686511f3589163704",
+      "deploymentTx": "0x4e9393c948238f29b5788a1a92e5de4e1c3569e89b912052456617c764b170ed",
       "constructorArgs": [
         "0xFdB0a83d94CD65151148a131167Eb499Cb85d015",
         "0x9580498224551E3f2e3A04330a684BF025111C53",
