@@ -554,6 +554,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
      */
     function setDefaultFee(uint24 newFee) external onlyOwner {
         if (newFee >= 1_000_000) revert InvalidFee(newFee);
+        // Verify fee tier is enabled in factory (JUICE1-7 fix)
+        int24 tickSpacing = FACTORY.feeAmountTickSpacing(newFee);
+        if (tickSpacing == 0) revert InvalidFee(newFee);
+
         uint24 oldFee = defaultFee;
         defaultFee = newFee;
         emit DefaultFeeUpdated(oldFee, newFee);
