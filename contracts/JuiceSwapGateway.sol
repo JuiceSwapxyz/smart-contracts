@@ -217,7 +217,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     ) external payable nonReentrant whenNotPaused returns (uint256 amountOut) {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (amountIn == 0) revert InvalidAmount();
-        if (fee >= 1_000_000) revert InvalidFee(fee);
+
+        // Use defaultFee when fee is 0 (JUICE1-6 fix)
+        uint24 effectiveFee = fee == 0 ? defaultFee : fee;
+        if (effectiveFee >= 1_000_000) revert InvalidFee(effectiveFee);
 
         // Step 1: Handle input token conversion
         (address actualTokenIn, uint256 actualAmountIn) = _handleTokenIn(tokenIn, amountIn);
@@ -229,7 +232,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
             tokenIn: actualTokenIn,
             tokenOut: actualTokenOut,
-            fee: fee,
+            fee: effectiveFee,
             recipient: address(this),
             deadline: deadline,
             amountIn: actualAmountIn,
@@ -265,6 +268,9 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     ) external payable nonReentrant whenNotPaused returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
         if (block.timestamp > deadline) revert DeadlineExpired();
 
+        // Use defaultFee when fee is 0 (JUICE1-6 fix)
+        uint24 effectiveFee = fee == 0 ? defaultFee : fee;
+
         // Convert input tokens
         (address actualTokenA, uint256 actualAmountADesired) = _handleTokenIn(tokenA, amountADesired);
         (address actualTokenB, uint256 actualAmountBDesired) = _handleTokenIn(tokenB, amountBDesired);
@@ -284,12 +290,12 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
                 ? (actualAmountAMin, actualAmountBMin)
                 : (actualAmountBMin, actualAmountAMin);
 
-        (int24 tickLower, int24 tickUpper) = _getFullRangeTicks(fee);
+        (int24 tickLower, int24 tickUpper) = _getFullRangeTicks(effectiveFee);
 
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
             token0: token0,
             token1: token1,
-            fee: fee,
+            fee: effectiveFee,
             tickLower: tickLower,
             tickUpper: tickUpper,
             amount0Desired: amount0Desired,
