@@ -57,6 +57,7 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     address public swapRouter; // Uniswap V3 SwapRouter address
     uint32 public twapPeriod; // TWAP observation period in seconds
     uint256 public maxSlippageBps; // Maximum allowed slippage in basis points (e.g., 200 = 2%)
+    uint32 public expectedBlockTime; // Expected block time in seconds (e.g., 2 for Citrea)
 
     address public authorizedCollector; // Address authorized to collect fees
 
@@ -71,12 +72,14 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     event CollectorUpdated(address indexed oldCollector, address indexed newCollector);
     event FactoryOwnerUpdated(address indexed newOwner);
     event FeeAmountEnabled(uint24 indexed fee, int24 indexed tickSpacing);
+    event ExpectedBlockTimeUpdated(uint32 blockTime);
 
     error InvalidAddress();
     error InvalidParams();
     error PoolDoesNotExist();
     error Unauthorized();
     error InvalidPath();
+    error InsufficientCardinality(address pool);
 
     constructor(
         address _jusd,
@@ -96,9 +99,10 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
         swapRouter = _swapRouter;
         FACTORY = _factory;
 
-        // Initialize protection parameters (30 minutes TWAP, 2% max slippage)
+        // Initialize protection parameters (30 minutes TWAP, 2% max slippage, 2s blocks for Citrea)
         twapPeriod = 1800;
         maxSlippageBps = 200;
+        expectedBlockTime = 2; // Citrea has 2-second block time
     }
 
     /**
@@ -245,6 +249,12 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
             // Get pool address
             address pool = _computePoolAddress(FACTORY, tokenIn, tokenOut, fee);
 
+            // Verify pool has sufficient observation cardinality for TWAP (JUICE1-14 fix)
+            // Cardinality must cover the full TWAP window: twapPeriod / blockTime + 1
+            (,, , uint16 observationCardinality,,,) = IUniswapV3Pool(pool).slot0();
+            uint256 minCardinality = (uint256(twapPeriod) / uint256(expectedBlockTime)) + 1;
+            if (observationCardinality < minCardinality) revert InsufficientCardinality(pool);
+
             // Get TWAP tick for this pool
             (int24 twapTick, ) = OracleLibrary.consult(pool, twapPeriod);
 
@@ -296,6 +306,21 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
         maxSlippageBps = _maxSlippageBps;
 
         emit ProtectionParamsUpdated(_twapPeriod, _maxSlippageBps);
+    }
+
+    /**
+     * @notice Update expected block time for cardinality calculations
+     * @param _blockTime Expected block time in seconds
+     * @dev Only callable by owner (governance). Used to calculate minimum
+     *      observation cardinality for TWAP protection.
+     */
+    function setExpectedBlockTime(uint32 _blockTime) external onlyOwner {
+        if (_blockTime == 0) revert InvalidParams();
+        if (_blockTime > 60) revert InvalidParams(); // Sanity check: max 60 seconds
+
+        expectedBlockTime = _blockTime;
+
+        emit ExpectedBlockTimeUpdated(_blockTime);
     }
 
     /**
