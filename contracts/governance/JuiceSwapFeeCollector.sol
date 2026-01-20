@@ -128,10 +128,15 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
 
         uint256 jusdBefore = JUSD.balanceOf(address(this));
 
+        // Only collect tokens that have valid swap paths or are already JUSD (JUICE1-13 fix)
+        // This prevents tokens from getting stuck in the contract when no path is provided
+        bool shouldCollect0 = token0 == address(JUSD) || path0.length > 0;
+        bool shouldCollect1 = token1 == address(JUSD) || path1.length > 0;
+
         (uint128 amount0, uint128 amount1) = v3Pool.collectProtocol(
             address(this),
-            type(uint128).max,
-            type(uint128).max
+            shouldCollect0 ? type(uint128).max : 0,
+            shouldCollect1 ? type(uint128).max : 0
         );
 
         // Swap token0 to JUSD if needed (path0.length > 0 means swap is required)
