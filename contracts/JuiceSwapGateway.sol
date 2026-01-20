@@ -28,7 +28,6 @@ interface ISwapRouter {
         address tokenOut;
         uint24 fee;
         address recipient;
-        uint256 deadline;
         uint256 amountIn;
         uint256 amountOutMinimum;
         uint160 sqrtPriceLimitX96;
@@ -39,7 +38,6 @@ interface ISwapRouter {
     struct ExactInputParams {
         bytes path;
         address recipient;
-        uint256 deadline;
         uint256 amountIn;
         uint256 amountOutMinimum;
     }
@@ -234,7 +232,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
             tokenOut: actualTokenOut,
             fee: effectiveFee,
             recipient: address(this),
-            deadline: deadline,
             amountIn: actualAmountIn,
             amountOutMinimum: 0, // Slippage checked after conversions
             sqrtPriceLimitX96: 0

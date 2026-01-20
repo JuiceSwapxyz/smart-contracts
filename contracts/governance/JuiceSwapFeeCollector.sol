@@ -19,7 +19,6 @@ interface ISwapRouter {
     struct ExactInputParams {
         bytes path;
         address recipient;
-        uint256 deadline;
         uint256 amountIn;
         uint256 amountOutMinimum;
     }
@@ -198,7 +197,6 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
             ISwapRouter.ExactInputParams({
                 path: path,
                 recipient: address(this),
-                deadline: block.timestamp + 5 minutes,
                 amountIn: amountIn,
                 amountOutMinimum: minOutput
             })

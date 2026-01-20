@@ -30,4 +30,11 @@ contract MockWETH is ERC20 {
         _mint(msg.sender, msg.value);
         emit Deposit(msg.sender, msg.value);
     }
+
+    /**
+     * @notice Mint tokens for testing (allows MockSwapRouter to mint output tokens)
+     */
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
