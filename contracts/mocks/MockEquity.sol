@@ -15,6 +15,10 @@ contract MockEquity is ERC20 {
     // Simple pricing: 1 JUICE = 100 JUSD (can be adjusted)
     uint256 public constant PRICE = 100e18;
 
+    // Override for testing slippage scenarios (JUICE1-4)
+    uint256 private _investReturnOverride;
+    bool private _useInvestOverride;
+
     constructor(
         string memory name,
         string memory symbol,
@@ -34,11 +38,32 @@ contract MockEquity is ERC20 {
 
         JUSD.transferFrom(msg.sender, address(this), amount);
 
-        // Calculate shares: amount / PRICE
-        shares = (amount * 1e18) / PRICE;
+        // Use override if set (for testing slippage scenarios)
+        if (_useInvestOverride) {
+            shares = _investReturnOverride;
+        } else {
+            // Calculate shares: amount / PRICE
+            shares = (amount * 1e18) / PRICE;
+        }
         _mint(msg.sender, shares);
 
         return shares;
+    }
+
+    /**
+     * @notice Set a custom invest return amount for testing
+     * @param amount The fixed amount of JUICE to return from invest()
+     */
+    function setInvestReturn(uint256 amount) external {
+        _investReturnOverride = amount;
+        _useInvestOverride = true;
+    }
+
+    /**
+     * @notice Clear the invest override and return to normal behavior
+     */
+    function clearInvestOverride() external {
+        _useInvestOverride = false;
     }
 
     /**

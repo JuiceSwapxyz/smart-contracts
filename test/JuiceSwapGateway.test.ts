@@ -824,6 +824,72 @@ describe("JuiceSwapGateway", function () {
         )
       ).to.be.revertedWithCustomError(gateway, "DeadlineExpired");
     });
+
+    it("Should revert when JUICE output is less than minimum after conversion (JUICE1-4)", async function () {
+      const { gateway, user1, juice, svJusd, wcbtc, positionManager, jusd } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const tokenId = 1;
+      const liquidity = 100;
+
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+
+      // Determine token ordering (Uniswap V3 requirement: token0 < token1)
+      const svJusdIsToken0 = svJusdAddr.toLowerCase() < wcbtcAddr.toLowerCase();
+
+      // Setup position with svJUSD (which will be converted to JUICE on output)
+      await positionManager.setPositionData(
+        tokenId,
+        svJusdIsToken0 ? svJusdAddr : wcbtcAddr,
+        svJusdIsToken0 ? wcbtcAddr : svJusdAddr,
+        liquidity
+      );
+
+      // Set decrease result with correct token order
+      // amount0 corresponds to token0, amount1 to token1
+      const svJusdAmount = ethers.parseEther("100");
+      const wcbtcAmount = ethers.parseEther("1");
+      await positionManager.setDecreaseResult(
+        svJusdIsToken0 ? svJusdAmount : wcbtcAmount,
+        svJusdIsToken0 ? wcbtcAmount : svJusdAmount
+      );
+
+      // Fund position manager with tokens it will return
+      const posManagerAddr = await positionManager.getAddress();
+      const [owner] = await ethers.getSigners();
+      await jusd.mint(owner.address, svJusdAmount);
+      await jusd.connect(owner).approve(svJusdAddr, svJusdAmount);
+      await svJusd.connect(owner).deposit(svJusdAmount, posManagerAddr);
+      await wcbtc.deposit({ value: wcbtcAmount });
+      await wcbtc.transfer(posManagerAddr, wcbtcAmount);
+
+      // Set MockEquity to return less JUICE than the minimum requested
+      // User will request amountAMin of 10 JUICE, but we'll only return 5
+      await juice.setInvestReturn(ethers.parseEther("5"));
+
+      await positionManager.mintNFT(user1.address, tokenId);
+      await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
+
+      // Request JUICE as output with minimum of 10 JUICE
+      // The conversion svJUSD -> JUSD -> JUICE will only return 5 JUICE (via override)
+      // This should fail the slippage check
+      await expect(
+        gateway.connect(user1).removeLiquidity(
+          await juice.getAddress(), // Request JUICE as tokenA
+          await wcbtc.getAddress(),
+          tokenId,
+          ethers.parseEther("10"), // amountAMin = 10 JUICE
+          0,
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "InsufficientOutput");
+
+      // Clean up: reset the invest override for other tests
+      await juice.clearInvestOverride();
+    });
   });
 
   describe("NFT Handling", function () {

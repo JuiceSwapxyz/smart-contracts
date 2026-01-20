@@ -391,6 +391,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         amountA = _handleTokenOut(tokenA, actualAmountA, to);
         amountB = _handleTokenOut(tokenB, actualAmountB, to);
 
+        // Verify final amounts meet user's minimums after all conversions (JUICE1-4 fix)
+        if (amountA < amountAMin) revert InsufficientOutput();
+        if (amountB < amountBMin) revert InsufficientOutput();
+
         // Return NFT to user
         IERC721(address(POSITION_MANAGER)).safeTransferFrom(address(this), msg.sender, tokenId);
 
