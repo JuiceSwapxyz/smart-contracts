@@ -328,13 +328,84 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     }
 
     /**
-     * @notice Removes liquidity with automatic svJUSD→JUSD conversion
-     * @dev For Uniswap V3, 'liquidity' parameter is the NFT tokenId
+     * @notice Increases liquidity of an existing position with automatic JUSD→svJUSD conversion
+     * @dev Requires NFT approval to Gateway. Returns NFT to sender after operation.
      */
-    function removeLiquidity(
+    function increaseLiquidity(
+        uint256 tokenId,
         address tokenA,
         address tokenB,
-        uint256 liquidity, // tokenId in V3
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        uint256 deadline
+    ) external payable nonReentrant whenNotPaused returns (uint256 amountA, uint256 amountB, uint128 liquidity) {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+
+        // Verify NFT ownership
+        address nftOwner = IERC721(address(POSITION_MANAGER)).ownerOf(tokenId);
+        if (nftOwner != msg.sender) revert NotNFTOwner(msg.sender, nftOwner);
+
+        // Transfer NFT to this contract
+        IERC721(address(POSITION_MANAGER)).transferFrom(msg.sender, address(this), tokenId);
+
+        // Convert input tokens (JUSD → svJUSD)
+        (address actualTokenA, uint256 actualAmountADesired) = _handleTokenIn(tokenA, amountADesired);
+        (address actualTokenB, uint256 actualAmountBDesired) = _handleTokenIn(tokenB, amountBDesired);
+
+        // Calculate minimum amounts for actual tokens
+        uint256 actualAmountAMin = tokenA == address(JUSD) ? _jusdToSvJusdAmount(amountAMin) : amountAMin;
+        uint256 actualAmountBMin = tokenB == address(JUSD) ? _jusdToSvJusdAmount(amountBMin) : amountBMin;
+
+        // Cache token ordering comparison
+        bool isAToken0 = actualTokenA < actualTokenB;
+
+        INonfungiblePositionManager.IncreaseLiquidityParams memory params =
+            INonfungiblePositionManager.IncreaseLiquidityParams({
+                tokenId: tokenId,
+                amount0Desired: isAToken0 ? actualAmountADesired : actualAmountBDesired,
+                amount1Desired: isAToken0 ? actualAmountBDesired : actualAmountADesired,
+                amount0Min: isAToken0 ? actualAmountAMin : actualAmountBMin,
+                amount1Min: isAToken0 ? actualAmountBMin : actualAmountAMin,
+                deadline: deadline
+            });
+
+        uint256 amount0;
+        uint256 amount1;
+        (liquidity, amount0, amount1) = POSITION_MANAGER.increaseLiquidity(params);
+
+        // Map back to A/B order
+        (amountA, amountB) = isAToken0 ? (amount0, amount1) : (amount1, amount0);
+
+        // Return excess tokens to user
+        uint256 excessA = isAToken0
+            ? (actualAmountADesired > amount0 ? actualAmountADesired - amount0 : 0)
+            : (actualAmountADesired > amount1 ? actualAmountADesired - amount1 : 0);
+        uint256 excessB = isAToken0
+            ? (actualAmountBDesired > amount1 ? actualAmountBDesired - amount1 : 0)
+            : (actualAmountBDesired > amount0 ? actualAmountBDesired - amount0 : 0);
+
+        _returnExcess(tokenA, actualTokenA, excessA, msg.sender);
+        _returnExcess(tokenB, actualTokenB, excessB, msg.sender);
+
+        // Return NFT to user
+        IERC721(address(POSITION_MANAGER)).safeTransferFrom(address(this), msg.sender, tokenId);
+
+        emit LiquidityIncreased(msg.sender, tokenId, amountA, amountB, liquidity);
+        return (amountA, amountB, liquidity);
+    }
+
+    /**
+     * @notice Removes liquidity with automatic svJUSD→JUSD conversion
+     * @dev Supports partial removal. Set liquidityToRemove to 0 to remove all liquidity.
+     *      Requires NFT approval to Gateway. Returns NFT to sender after operation.
+     */
+    function removeLiquidity(
+        uint256 tokenId,
+        uint128 liquidityToRemove,
+        address tokenA,
+        address tokenB,
         uint256 amountAMin,
         uint256 amountBMin,
         address to,
@@ -342,14 +413,15 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     ) external nonReentrant whenNotPaused returns (uint256 amountA, uint256 amountB) {
         if (block.timestamp > deadline) revert DeadlineExpired();
 
-        uint256 tokenId = liquidity;
-
         // Verify NFT ownership to prevent theft
         address nftOwner = IERC721(address(POSITION_MANAGER)).ownerOf(tokenId);
         if (nftOwner != msg.sender) revert NotNFTOwner(msg.sender, nftOwner);
 
         // Get position info to determine liquidity amount
-        (,,,,,,, uint128 liquidityAmount,,,,) = POSITION_MANAGER.positions(tokenId);
+        (,,,,,,, uint128 positionLiquidity,,,,) = POSITION_MANAGER.positions(tokenId);
+
+        // Use specified amount or full position liquidity
+        uint128 liquidityAmount = liquidityToRemove == 0 ? positionLiquidity : liquidityToRemove;
 
         // Transfer NFT to this contract
         IERC721(address(POSITION_MANAGER)).transferFrom(msg.sender, address(this), tokenId);
@@ -367,7 +439,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
             ? (actualAmountAMin, actualAmountBMin)
             : (actualAmountBMin, actualAmountAMin);
 
-        // Decrease liquidity to 0
+        // Decrease liquidity (partial or full)
         INonfungiblePositionManager.DecreaseLiquidityParams memory decreaseParams =
             INonfungiblePositionManager.DecreaseLiquidityParams({
                 tokenId: tokenId,
