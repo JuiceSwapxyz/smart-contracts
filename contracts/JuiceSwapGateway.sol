@@ -155,12 +155,15 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     error InvalidToken();
     error InvalidAmount();
     error InsufficientOutput();
+    error SlippageExceeded();
     error TransferFailed();
     error DeadlineExpired();
     error DirectTransferNotAccepted();
     error JuiceInputNotSupported();
     error NotNFTOwner(address caller, address owner);
     error InvalidFee(uint24 fee);
+    error TokenMismatch(address expected0, address expected1, address provided0, address provided1);
+    error InsufficientLiquidity(uint128 requested, uint128 available);
 
     event TokenRescued(address indexed token, address indexed to, uint256 amount);
     event NativeRescued(address indexed to, uint256 amount);
@@ -347,7 +350,18 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         address nftOwner = IERC721(address(POSITION_MANAGER)).ownerOf(tokenId);
         if (nftOwner != msg.sender) revert NotNFTOwner(msg.sender, nftOwner);
 
-        // Transfer NFT to this contract
+        // Validate tokens match position BEFORE any transfers (positions() is a view function)
+        (,, address posToken0, address posToken1,,,,,,,,) = POSITION_MANAGER.positions(tokenId);
+        address expectedTokenA = _getActualToken(tokenA);
+        address expectedTokenB = _getActualToken(tokenB);
+
+        bool tokensMatch = (expectedTokenA == posToken0 && expectedTokenB == posToken1) ||
+                           (expectedTokenA == posToken1 && expectedTokenB == posToken0);
+        if (!tokensMatch) {
+            revert TokenMismatch(posToken0, posToken1, expectedTokenA, expectedTokenB);
+        }
+
+        // Transfer NFT to this contract (only after validation passes)
         IERC721(address(POSITION_MANAGER)).transferFrom(msg.sender, address(this), tokenId);
 
         // Convert input tokens (JUSD → svJUSD)
@@ -377,6 +391,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
 
         // Map back to A/B order
         (amountA, amountB) = isAToken0 ? (amount0, amount1) : (amount1, amount0);
+
+        // Defense-in-depth slippage check (PM enforces internally, kept for non-conforming implementations)
+        if (amountA < actualAmountAMin) revert SlippageExceeded();
+        if (amountB < actualAmountBMin) revert SlippageExceeded();
 
         // Return excess tokens to user
         uint256 excessA = isAToken0
@@ -422,6 +440,11 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
 
         // Use specified amount or full position liquidity
         uint128 liquidityAmount = liquidityToRemove == 0 ? positionLiquidity : liquidityToRemove;
+
+        // Validate liquidity amount doesn't exceed position
+        if (liquidityToRemove > positionLiquidity) {
+            revert InsufficientLiquidity(liquidityToRemove, positionLiquidity);
+        }
 
         // Transfer NFT to this contract
         IERC721(address(POSITION_MANAGER)).transferFrom(msg.sender, address(this), tokenId);

@@ -1276,6 +1276,55 @@ describe("JuiceSwapGateway", function () {
         )
       ).to.be.revertedWithCustomError(gateway, "JuiceInputNotSupported");
     });
+
+    it("Should revert if tokens don't match position", async function () {
+      const { gateway, user1, jusd, svJusd, wcbtc, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const tokenId = 1;
+      const jusdAmount = ethers.parseEther("100");
+      const wcbtcAmount = ethers.parseEther("1");
+
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+
+      // Setup position with svJUSD/WcBTC tokens
+      const [token0, token1] = svJusdAddr < wcbtcAddr
+        ? [svJusdAddr, wcbtcAddr]
+        : [wcbtcAddr, svJusdAddr];
+      await positionManager.setPositionData(tokenId, token0, token1, 100);
+
+      await positionManager.mintNFT(user1.address, tokenId);
+      await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
+
+      // Deploy a different mock token to use as wrong input
+      const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+      const wrongToken = await MockERC20Factory.deploy("Wrong Token", "WRONG", 18);
+      await wrongToken.waitForDeployment();
+      await wrongToken.mint(user1.address, jusdAmount);
+
+      await wrongToken.connect(user1).approve(await gateway.getAddress(), jusdAmount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
+
+      // Try to increase liquidity with wrong token (wrongToken instead of JUSD)
+      await expect(
+        gateway.connect(user1).increaseLiquidity(
+          tokenId,
+          await wrongToken.getAddress(), // Wrong token - doesn't match position
+          await wcbtc.getAddress(),
+          jusdAmount,
+          wcbtcAmount,
+          0,
+          0,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "TokenMismatch")
+        .withArgs(token0, token1, await wrongToken.getAddress(), wcbtcAddr);
+
+      // Verify NFT remains with user (validation happens before NFT transfer)
+      expect(await positionManager.ownerOf(tokenId)).to.equal(user1.address);
+    });
   });
 
   describe("Remove Liquidity", function () {
@@ -1640,6 +1689,42 @@ describe("JuiceSwapGateway", function () {
 
       // NFT should still be owned by user (returned after operation)
       expect(await positionManager.ownerOf(tokenId)).to.equal(user1.address);
+    });
+
+    it("Should revert if liquidityToRemove exceeds position liquidity", async function () {
+      const { gateway, user1, jusd, svJusd, wcbtc, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const tokenId = 1;
+      const positionLiquidity = 100; // Position has 100 liquidity
+      const liquidityToRemove = 200; // Trying to remove 200 (more than available)
+
+      // Setup position with limited liquidity
+      await positionManager.setPositionData(
+        tokenId,
+        await svJusd.getAddress(),
+        await wcbtc.getAddress(),
+        positionLiquidity
+      );
+
+      await positionManager.mintNFT(user1.address, tokenId);
+      await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
+
+      // Try to remove more liquidity than the position has
+      await expect(
+        gateway.connect(user1).removeLiquidity(
+          tokenId,
+          liquidityToRemove, // 200 > 100 available
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          0,
+          0,
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "InsufficientLiquidity")
+        .withArgs(liquidityToRemove, positionLiquidity);
     });
   });
 
