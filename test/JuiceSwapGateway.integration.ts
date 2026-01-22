@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { ethers } from "hardhat";
+import { ethers, network } from "hardhat";
 import { Signer, Contract } from "ethers";
 
 /**
@@ -12,7 +12,7 @@ import { Signer, Contract } from "ethers";
  */
 
 const ADDRESSES = {
-  JuiceSwapGateway: "0x44B89B1a71f72aB6FeFa807686511f3589163704",
+  JuiceSwapGateway: "0x4dA952040Cd5b90aFA84f6365F90dB4d704AB4D0",
   JUSD: "0xFdB0a83d94CD65151148a131167Eb499Cb85d015",
   svJUSD: "0x9580498224551E3f2e3A04330a684BF025111C53",
   WcBTC: "0x8d0c9d1c17aE5e40ffF9bE350f57840E9E66Cd93",
@@ -44,7 +44,7 @@ const POSITION_MANAGER_ABI = [
 ];
 
 // Skip entire test suite if not on Citrea Testnet
-const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
+const isIntegrationTest = network.name === "citreaTestnet";
 
 (isIntegrationTest ? describe : describe.skip)("JuiceSwapGateway Integration Tests (Citrea Testnet)", function () {
   this.timeout(120_000);
@@ -58,8 +58,8 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
   let positionManager: Contract;
 
   const JUSD_AMOUNT = 1_000_000n; // 1 JUSD (6 decimals)
-  const WCBTC_AMOUNT = 1000n; // 0.00001 WcBTC (8 decimals)
-  const CBTC_AMOUNT = 1000n; // 0.00001 cBTC (8 decimals)
+  const WCBTC_AMOUNT = 1000n; // 0.000000000000001 WcBTC (18 decimals)
+  const CBTC_AMOUNT = 1000n; // 0.000000000000001 cBTC (18 decimals)
   const FEE = 3000; // 0.3%
 
   const getDeadline = () => Math.floor(Date.now() / 1000) + 3600;
@@ -72,14 +72,18 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
     }
   }
 
-  function findSwapEvent(receipt: any): boolean {
-    return receipt.logs.some((log: any) => {
+  function findSwapEvent(receipt: any): { amountIn: bigint; amountOut: bigint } | null {
+    for (const log of receipt.logs) {
       try {
-        return gateway.interface.parseLog(log)?.name === "SwapExecuted";
+        const parsed = gateway.interface.parseLog(log);
+        if (parsed?.name === "SwapExecuted") {
+          return { amountIn: parsed.args.amountIn, amountOut: parsed.args.amountOut };
+        }
       } catch {
-        return false;
+        // Not a gateway event
       }
-    });
+    }
+    return null;
   }
 
   function findLiquidityAddedEvent(receipt: any): { tokenId: bigint } | null {
@@ -110,14 +114,18 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
     return null;
   }
 
-  function findLiquidityRemovedEvent(receipt: any): boolean {
-    return receipt.logs.some((log: any) => {
+  function findLiquidityRemovedEvent(receipt: any): { amountA: bigint; amountB: bigint } | null {
+    for (const log of receipt.logs) {
       try {
-        return gateway.interface.parseLog(log)?.name === "LiquidityRemoved";
+        const parsed = gateway.interface.parseLog(log);
+        if (parsed?.name === "LiquidityRemoved") {
+          return { amountA: parsed.args.amountA, amountB: parsed.args.amountB };
+        }
       } catch {
-        return false;
+        // Not a gateway event
       }
-    });
+    }
+    return null;
   }
 
   async function ensureNFTApproval(tokenId: bigint) {
@@ -154,8 +162,8 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
     ]);
 
     console.log(`  JUSD: ${ethers.formatUnits(jusdBal, 6)}`);
-    console.log(`  WcBTC: ${ethers.formatUnits(wcbtcBal, 8)}`);
-    console.log(`  cBTC: ${ethers.formatUnits(cbtcBal, 8)}\n`);
+    console.log(`  WcBTC: ${ethers.formatUnits(wcbtcBal, 18)}`);
+    console.log(`  cBTC: ${ethers.formatUnits(cbtcBal, 18)}\n`);
   });
 
   describe("1. JUSD -> WcBTC", function () {
@@ -164,6 +172,7 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       if (balance < JUSD_AMOUNT) this.skip();
 
       await ensureApproval(jusd, JUSD_AMOUNT);
+      const jusdBefore = await jusd.balanceOf(signerAddress);
       const wcbtcBefore = await wcbtc.balanceOf(signerAddress);
 
       console.log(`    Swapping ${ethers.formatUnits(JUSD_AMOUNT, 6)} JUSD -> WcBTC...`);
@@ -178,13 +187,25 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       );
       const receipt = await tx.wait();
 
+      const jusdAfter = await jusd.balanceOf(signerAddress);
       const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
-      const received = wcbtcAfter - wcbtcBefore;
-      console.log(`    Received: ${ethers.formatUnits(received, 8)} WcBTC`);
+      const jusdSpent = jusdBefore - jusdAfter;
+      const wcbtcReceived = wcbtcAfter - wcbtcBefore;
+      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD, Received: ${ethers.formatUnits(wcbtcReceived, 18)} WcBTC`);
 
       expect(receipt.status).to.equal(1);
-      expect(received).to.be.gt(0);
-      expect(findSwapEvent(receipt)).to.be.true;
+
+      // Verify input was spent
+      expect(jusdSpent).to.equal(JUSD_AMOUNT);
+
+      // Verify output received
+      expect(wcbtcReceived).to.be.gt(0);
+
+      // Verify event exists and amounts match actual balance changes
+      const swapEvent = findSwapEvent(receipt);
+      expect(swapEvent).to.not.be.null;
+      expect(swapEvent!.amountIn).to.equal(JUSD_AMOUNT);
+      expect(swapEvent!.amountOut).to.equal(wcbtcReceived);
     });
   });
 
@@ -194,9 +215,10 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       if (balance < WCBTC_AMOUNT) this.skip();
 
       await ensureApproval(wcbtc, WCBTC_AMOUNT);
+      const wcbtcBefore = await wcbtc.balanceOf(signerAddress);
       const jusdBefore = await jusd.balanceOf(signerAddress);
 
-      console.log(`    Swapping ${ethers.formatUnits(WCBTC_AMOUNT, 8)} WcBTC -> JUSD...`);
+      console.log(`    Swapping ${ethers.formatUnits(WCBTC_AMOUNT, 18)} WcBTC -> JUSD...`);
       const tx = await gateway.swapExactTokensForTokens(
         ADDRESSES.WcBTC,
         ADDRESSES.JUSD,
@@ -208,13 +230,25 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       );
       const receipt = await tx.wait();
 
+      const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
       const jusdAfter = await jusd.balanceOf(signerAddress);
-      const received = jusdAfter - jusdBefore;
-      console.log(`    Received: ${ethers.formatUnits(received, 6)} JUSD`);
+      const wcbtcSpent = wcbtcBefore - wcbtcAfter;
+      const jusdReceived = jusdAfter - jusdBefore;
+      console.log(`    Spent: ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC, Received: ${ethers.formatUnits(jusdReceived, 6)} JUSD`);
 
       expect(receipt.status).to.equal(1);
-      expect(received).to.be.gt(0);
-      expect(findSwapEvent(receipt)).to.be.true;
+
+      // Verify input was spent
+      expect(wcbtcSpent).to.equal(WCBTC_AMOUNT);
+
+      // Verify output received
+      expect(jusdReceived).to.be.gt(0);
+
+      // Verify event exists and amounts match actual balance changes
+      const swapEvent = findSwapEvent(receipt);
+      expect(swapEvent).to.not.be.null;
+      expect(swapEvent!.amountIn).to.equal(WCBTC_AMOUNT);
+      expect(swapEvent!.amountOut).to.equal(jusdReceived);
     });
   });
 
@@ -225,7 +259,7 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
 
       const jusdBefore = await jusd.balanceOf(signerAddress);
 
-      console.log(`    Swapping ${ethers.formatUnits(CBTC_AMOUNT, 8)} cBTC -> JUSD...`);
+      console.log(`    Swapping ${ethers.formatUnits(CBTC_AMOUNT, 18)} cBTC -> JUSD...`);
       const tx = await gateway.swapExactTokensForTokens(
         ethers.ZeroAddress,
         ADDRESSES.JUSD,
@@ -239,12 +273,20 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const receipt = await tx.wait();
 
       const jusdAfter = await jusd.balanceOf(signerAddress);
-      const received = jusdAfter - jusdBefore;
-      console.log(`    Received: ${ethers.formatUnits(received, 6)} JUSD`);
+      const jusdReceived = jusdAfter - jusdBefore;
+      console.log(`    Received: ${ethers.formatUnits(jusdReceived, 6)} JUSD`);
 
       expect(receipt.status).to.equal(1);
-      expect(received).to.be.gt(0);
-      expect(findSwapEvent(receipt)).to.be.true;
+
+      // Verify output received
+      expect(jusdReceived).to.be.gt(0);
+
+      // Verify event exists and amounts match
+      // Note: Can't verify native cBTC input decrease due to gas complications
+      const swapEvent = findSwapEvent(receipt);
+      expect(swapEvent).to.not.be.null;
+      expect(swapEvent!.amountIn).to.equal(CBTC_AMOUNT);
+      expect(swapEvent!.amountOut).to.equal(jusdReceived);
     });
   });
 
@@ -254,9 +296,10 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       if (balance < WCBTC_AMOUNT) this.skip();
 
       await ensureApproval(wcbtc, WCBTC_AMOUNT);
+      const wcbtcBefore = await wcbtc.balanceOf(signerAddress);
       const juiceBefore = await juice.balanceOf(signerAddress);
 
-      console.log(`    Swapping ${ethers.formatUnits(WCBTC_AMOUNT, 8)} WcBTC -> JUICE...`);
+      console.log(`    Swapping ${ethers.formatUnits(WCBTC_AMOUNT, 18)} WcBTC -> JUICE...`);
       const tx = await gateway.swapExactTokensForTokens(
         ADDRESSES.WcBTC,
         ADDRESSES.JUICE,
@@ -268,13 +311,25 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       );
       const receipt = await tx.wait();
 
+      const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
       const juiceAfter = await juice.balanceOf(signerAddress);
-      const received = juiceAfter - juiceBefore;
-      console.log(`    Received: ${ethers.formatUnits(received, 18)} JUICE`);
+      const wcbtcSpent = wcbtcBefore - wcbtcAfter;
+      const juiceReceived = juiceAfter - juiceBefore;
+      console.log(`    Spent: ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC, Received: ${ethers.formatUnits(juiceReceived, 18)} JUICE`);
 
       expect(receipt.status).to.equal(1);
-      expect(received).to.be.gt(0);
-      expect(findSwapEvent(receipt)).to.be.true;
+
+      // Verify input was spent
+      expect(wcbtcSpent).to.equal(WCBTC_AMOUNT);
+
+      // Verify output received
+      expect(juiceReceived).to.be.gt(0);
+
+      // Verify event exists and amounts match actual balance changes
+      const swapEvent = findSwapEvent(receipt);
+      expect(swapEvent).to.not.be.null;
+      expect(swapEvent!.amountIn).to.equal(WCBTC_AMOUNT);
+      expect(swapEvent!.amountOut).to.equal(juiceReceived);
     });
   });
 
@@ -285,7 +340,7 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
 
       const juiceBefore = await juice.balanceOf(signerAddress);
 
-      console.log(`    Swapping ${ethers.formatUnits(CBTC_AMOUNT, 8)} cBTC -> JUICE...`);
+      console.log(`    Swapping ${ethers.formatUnits(CBTC_AMOUNT, 18)} cBTC -> JUICE...`);
       const tx = await gateway.swapExactTokensForTokens(
         ethers.ZeroAddress,
         ADDRESSES.JUICE,
@@ -299,12 +354,20 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const receipt = await tx.wait();
 
       const juiceAfter = await juice.balanceOf(signerAddress);
-      const received = juiceAfter - juiceBefore;
-      console.log(`    Received: ${ethers.formatUnits(received, 18)} JUICE`);
+      const juiceReceived = juiceAfter - juiceBefore;
+      console.log(`    Received: ${ethers.formatUnits(juiceReceived, 18)} JUICE`);
 
       expect(receipt.status).to.equal(1);
-      expect(received).to.be.gt(0);
-      expect(findSwapEvent(receipt)).to.be.true;
+
+      // Verify output received
+      expect(juiceReceived).to.be.gt(0);
+
+      // Verify event exists and amounts match
+      // Note: Can't verify native cBTC input decrease due to gas complications
+      const swapEvent = findSwapEvent(receipt);
+      expect(swapEvent).to.not.be.null;
+      expect(swapEvent!.amountIn).to.equal(CBTC_AMOUNT);
+      expect(swapEvent!.amountOut).to.equal(juiceReceived);
     });
   });
 
@@ -315,19 +378,22 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const jusdBalance = await jusd.balanceOf(signerAddress);
       const wcbtcBalance = await wcbtc.balanceOf(signerAddress);
 
-      // Use larger amounts for liquidity (10 JUSD + 0.0001 WcBTC)
+      // Use larger amounts for liquidity
       const jusdAmount = 10_000_000n; // 10 JUSD (6 decimals)
-      const wcbtcAmount = 10_000n; // 0.0001 WcBTC (8 decimals)
+      const wcbtcAmount = 10_000n; // 0.00000000000001 WcBTC (18 decimals)
 
       if (jusdBalance < jusdAmount || wcbtcBalance < wcbtcAmount) {
-        console.log(`    Skipping: Insufficient balance (need 10 JUSD and 0.0001 WcBTC)`);
+        console.log(`    Skipping: Insufficient balance (need 10 JUSD and some WcBTC)`);
         this.skip();
       }
 
       await ensureApproval(jusd, jusdAmount);
       await ensureApproval(wcbtc, wcbtcAmount);
 
-      console.log(`    Adding liquidity: ${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(wcbtcAmount, 8)} WcBTC...`);
+      const jusdBefore = await jusd.balanceOf(signerAddress);
+      const wcbtcBefore = await wcbtc.balanceOf(signerAddress);
+
+      console.log(`    Adding liquidity: ${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(wcbtcAmount, 18)} WcBTC...`);
       const tx = await gateway.addLiquidity(
         ADDRESSES.JUSD,
         ADDRESSES.WcBTC,
@@ -355,6 +421,15 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const liquidity = await getPositionLiquidity(positionTokenId);
       console.log(`    Position liquidity: ${liquidity}`);
       expect(liquidity).to.be.gt(0);
+
+      // Verify tokens were taken from user
+      const jusdAfter = await jusd.balanceOf(signerAddress);
+      const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
+      const jusdSpent = jusdBefore - jusdAfter;
+      const wcbtcSpent = wcbtcBefore - wcbtcAfter;
+      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD, ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC`);
+      expect(jusdSpent).to.be.gt(0);
+      expect(wcbtcSpent).to.be.gt(0);
     });
 
     it("6b. Should increase liquidity on existing position", async function () {
@@ -366,8 +441,8 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const jusdBalance = await jusd.balanceOf(signerAddress);
       const wcbtcBalance = await wcbtc.balanceOf(signerAddress);
 
-      const jusdAmount = 5_000_000n; // 5 JUSD
-      const wcbtcAmount = 5_000n; // 0.00005 WcBTC
+      const jusdAmount = 5_000_000n; // 5 JUSD (6 decimals)
+      const wcbtcAmount = 5_000n; // 0.000000000000005 WcBTC (18 decimals)
 
       if (jusdBalance < jusdAmount || wcbtcBalance < wcbtcAmount) {
         console.log(`    Skipping: Insufficient balance for increase`);
@@ -381,7 +456,10 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       await ensureApproval(jusd, jusdAmount);
       await ensureApproval(wcbtc, wcbtcAmount);
 
-      console.log(`    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(wcbtcAmount, 8)} WcBTC...`);
+      const jusdBefore = await jusd.balanceOf(signerAddress);
+      const wcbtcBefore = await wcbtc.balanceOf(signerAddress);
+
+      console.log(`    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(wcbtcAmount, 18)} WcBTC...`);
       const tx = await gateway.increaseLiquidity(
         positionTokenId,
         ADDRESSES.JUSD,
@@ -407,6 +485,15 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const liquidityAfter = await getPositionLiquidity(positionTokenId);
       console.log(`    Position liquidity: ${liquidityBefore} -> ${liquidityAfter}`);
       expect(liquidityAfter).to.be.gt(liquidityBefore);
+
+      // Verify tokens were taken from user
+      const jusdAfter = await jusd.balanceOf(signerAddress);
+      const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
+      const jusdSpent = jusdBefore - jusdAfter;
+      const wcbtcSpent = wcbtcBefore - wcbtcAfter;
+      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD, ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC`);
+      expect(jusdSpent).to.be.gt(0);
+      expect(wcbtcSpent).to.be.gt(0);
     });
 
     it("6c. Should remove partial liquidity", async function () {
@@ -442,7 +529,9 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const receipt = await tx.wait();
 
       expect(receipt.status).to.equal(1);
-      expect(findLiquidityRemovedEvent(receipt)).to.be.true;
+
+      const removedEvent = findLiquidityRemovedEvent(receipt);
+      expect(removedEvent).to.not.be.null;
 
       // Verify position still has liquidity
       const liquidityAfter = await getPositionLiquidity(positionTokenId);
@@ -457,7 +546,7 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       // Verify tokens received (check each individually since they have different decimals)
       const jusdAfter = await jusd.balanceOf(signerAddress);
       const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
-      console.log(`    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 6)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 8)} WcBTC`);
+      console.log(`    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 6)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 18)} WcBTC`);
       expect(jusdAfter).to.be.gt(jusdBefore);
       expect(wcbtcAfter).to.be.gt(wcbtcBefore);
     });
@@ -493,7 +582,9 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const receipt = await tx.wait();
 
       expect(receipt.status).to.equal(1);
-      expect(findLiquidityRemovedEvent(receipt)).to.be.true;
+
+      const removedEvent = findLiquidityRemovedEvent(receipt);
+      expect(removedEvent).to.not.be.null;
 
       // Verify all liquidity was removed from position
       const liquidityAfter = await getPositionLiquidity(positionTokenId);
@@ -502,7 +593,7 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       // Verify tokens received (check each individually since they have different decimals)
       const jusdAfter = await jusd.balanceOf(signerAddress);
       const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
-      console.log(`    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 6)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 8)} WcBTC`);
+      console.log(`    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 6)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 18)} WcBTC`);
       expect(jusdAfter).to.be.gt(jusdBefore);
       expect(wcbtcAfter).to.be.gt(wcbtcBefore);
     });
@@ -515,18 +606,20 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const cbtcBalance = await ethers.provider.getBalance(signerAddress);
       const jusdBalance = await jusd.balanceOf(signerAddress);
 
-      const cbtcAmount = 10_000n; // 0.0001 cBTC (8 decimals)
+      const cbtcAmount = 10_000n; // 0.00000000000001 cBTC (18 decimals)
       const jusdAmount = 10_000_000n; // 10 JUSD (6 decimals)
 
       if (cbtcBalance < cbtcAmount + ethers.parseEther("0.0005") || jusdBalance < jusdAmount) {
-        console.log(`    Skipping: Insufficient balance (need 0.0001 cBTC and 10 JUSD)`);
+        console.log(`    Skipping: Insufficient balance (need some cBTC and 10 JUSD)`);
         this.skip();
       }
 
       // Only approve JUSD (cBTC sent as value)
       await ensureApproval(jusd, jusdAmount);
 
-      console.log(`    Adding liquidity: ${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(cbtcAmount, 8)} native cBTC...`);
+      const jusdBefore = await jusd.balanceOf(signerAddress);
+
+      console.log(`    Adding liquidity: ${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(cbtcAmount, 18)} native cBTC...`);
       const tx = await gateway.addLiquidity(
         ADDRESSES.JUSD,
         ethers.ZeroAddress, // native cBTC
@@ -555,6 +648,12 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const liquidity = await getPositionLiquidity(positionTokenId);
       console.log(`    Position liquidity: ${liquidity}`);
       expect(liquidity).to.be.gt(0);
+
+      // Verify JUSD was taken from user (can't verify native cBTC due to gas complications)
+      const jusdAfter = await jusd.balanceOf(signerAddress);
+      const jusdSpent = jusdBefore - jusdAfter;
+      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD`);
+      expect(jusdSpent).to.be.gt(0);
     });
 
     it("7b. Should increase liquidity with native cBTC on position from 7a", async function () {
@@ -566,7 +665,7 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const cbtcBalance = await ethers.provider.getBalance(signerAddress);
       const jusdBalance = await jusd.balanceOf(signerAddress);
 
-      const cbtcAmount = 5_000n; // 0.00005 cBTC (8 decimals)
+      const cbtcAmount = 5_000n; // 0.000000000000005 cBTC (18 decimals)
       const jusdAmount = 5_000_000n; // 5 JUSD (6 decimals)
 
       if (cbtcBalance < cbtcAmount + ethers.parseEther("0.0005") || jusdBalance < jusdAmount) {
@@ -581,7 +680,9 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       // Only approve JUSD (cBTC sent as value)
       await ensureApproval(jusd, jusdAmount);
 
-      console.log(`    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(cbtcAmount, 8)} native cBTC...`);
+      const jusdBefore = await jusd.balanceOf(signerAddress);
+
+      console.log(`    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(cbtcAmount, 18)} native cBTC...`);
       const tx = await gateway.increaseLiquidity(
         positionTokenId,
         ADDRESSES.JUSD,
@@ -608,6 +709,12 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const liquidityAfter = await getPositionLiquidity(positionTokenId);
       console.log(`    Position liquidity: ${liquidityBefore} -> ${liquidityAfter}`);
       expect(liquidityAfter).to.be.gt(liquidityBefore);
+
+      // Verify JUSD was taken from user (can't verify native cBTC due to gas complications)
+      const jusdAfter = await jusd.balanceOf(signerAddress);
+      const jusdSpent = jusdBefore - jusdAfter;
+      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD`);
+      expect(jusdSpent).to.be.gt(0);
     });
 
     it("7c. Should remove liquidity and receive native cBTC", async function () {
@@ -622,8 +729,8 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
         this.skip();
       }
 
-      const cbtcBefore = await ethers.provider.getBalance(signerAddress);
       const jusdBefore = await jusd.balanceOf(signerAddress);
+      const wcbtcBefore = await wcbtc.balanceOf(signerAddress);
 
       await ensureNFTApproval(positionTokenId);
 
@@ -641,25 +748,40 @@ const isIntegrationTest = process.env.HARDHAT_NETWORK === "citreaTestnet";
       const receipt = await tx.wait();
 
       expect(receipt.status).to.equal(1);
-      expect(findLiquidityRemovedEvent(receipt)).to.be.true;
+
+      // Verify LiquidityRemoved event with non-zero amounts for both tokens
+      const removedEvent = findLiquidityRemovedEvent(receipt);
+      expect(removedEvent).to.not.be.null;
+      expect(removedEvent!.amountA).to.be.gt(0); // JUSD amount
+      expect(removedEvent!.amountB).to.be.gt(0); // cBTC amount (proves gateway processed the WcBTC)
+
+      console.log(`    Event amounts: ${ethers.formatUnits(removedEvent!.amountA, 6)} JUSD, ${ethers.formatUnits(removedEvent!.amountB, 18)} cBTC`);
 
       // Verify all liquidity was removed from position
       const liquidityAfter = await getPositionLiquidity(positionTokenId);
       expect(liquidityAfter).to.equal(0n);
 
-      // Calculate gas cost to accurately check cBTC received
-      const gasCost = BigInt(receipt.gasUsed) * BigInt(receipt.gasPrice);
-
       // Verify tokens received
-      const cbtcAfter = await ethers.provider.getBalance(signerAddress);
       const jusdAfter = await jusd.balanceOf(signerAddress);
+      const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
 
-      // cBTC balance should increase (minus gas cost)
-      const cbtcReceived = cbtcAfter - cbtcBefore + gasCost;
-      console.log(`    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 6)} JUSD, ${ethers.formatUnits(cbtcReceived, 8)} native cBTC`);
+      const jusdReceived = jusdAfter - jusdBefore;
+      const wcbtcChange = wcbtcAfter - wcbtcBefore;
 
-      expect(cbtcReceived).to.be.gt(0);
-      expect(jusdAfter).to.be.gt(jusdBefore);
+      console.log(`    Received: ${ethers.formatUnits(jusdReceived, 6)} JUSD`);
+      console.log(`    WcBTC change: ${wcbtcChange} (should be 0 if unwrapped to native)`);
+
+      // Verify JUSD was received (svJUSD -> JUSD conversion worked)
+      expect(jusdReceived).to.be.gt(0);
+
+      // Verify WcBTC was NOT received as ERC20 - combined with amountB > 0 in event,
+      // this proves the gateway unwrapped WcBTC to native cBTC instead of sending WcBTC directly.
+      // Note: We can't verify native cBTC balance increase due to Citrea's L2 fee structure
+      // (L1 data costs make gas accounting impossible), but the combination of:
+      // 1. Event shows non-zero cBTC amount processed
+      // 2. User's WcBTC balance unchanged
+      // proves the unwrap-and-send-native path was executed.
+      expect(wcbtcChange).to.equal(0n);
     });
   });
 });
