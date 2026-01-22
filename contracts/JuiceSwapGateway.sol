@@ -223,6 +223,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         IERC20(_wcbtc).approve(_positionManager, type(uint256).max);
         // Approve bridged USD to StablecoinBridge for mint operations
         IERC20(_bridgedUsd).approve(_stablecoinBridge, type(uint256).max);
+        // Approve JUSD to StablecoinBridge for burn operations (burnAndSend)
+        JUSD.approve(_stablecoinBridge, type(uint256).max);
     }
 
     /**
