@@ -45,6 +45,22 @@ interface IJuiceSwapGateway {
     );
 
     /**
+     * @notice Emitted when liquidity is increased for an existing position
+     * @param user The address that increased liquidity
+     * @param tokenId NFT position token ID
+     * @param amountA Amount of first token added
+     * @param amountB Amount of second token added
+     * @param liquidity Amount of liquidity added
+     */
+    event LiquidityIncreased(
+        address indexed user,
+        uint256 indexed tokenId,
+        uint256 amountA,
+        uint256 amountB,
+        uint128 liquidity
+    );
+
+    /**
      * @notice Emitted when liquidity is removed through the gateway
      * @param user The address that removed liquidity
      * @param tokenA First token address
@@ -111,10 +127,38 @@ interface IJuiceSwapGateway {
     ) external payable returns (uint256 amountA, uint256 amountB, uint256 liquidity);
 
     /**
-     * @notice Removes liquidity from a token pair pool
+     * @notice Increases liquidity for an existing position with automatic JUSD→svJUSD conversion
+     * @dev Requires NFT approval to Gateway. Returns NFT to sender after operation.
+     * @param tokenId The NFT position token ID
      * @param tokenA The address of the first token (use address(0) for native cBTC)
      * @param tokenB The address of the second token
-     * @param liquidity The amount of LP tokens to burn
+     * @param amountADesired The desired amount of tokenA to add
+     * @param amountBDesired The desired amount of tokenB to add
+     * @param amountAMin The minimum amount of tokenA to add (slippage protection)
+     * @param amountBMin The minimum amount of tokenB to add (slippage protection)
+     * @param deadline Unix timestamp after which the transaction will revert
+     * @return amountA Actual amount of tokenA added
+     * @return amountB Actual amount of tokenB added
+     * @return liquidity Amount of liquidity added
+     */
+    function increaseLiquidity(
+        uint256 tokenId,
+        address tokenA,
+        address tokenB,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        uint256 deadline
+    ) external payable returns (uint256 amountA, uint256 amountB, uint128 liquidity);
+
+    /**
+     * @notice Removes liquidity from an existing position with automatic svJUSD→JUSD conversion
+     * @dev Requires NFT approval to Gateway. Returns NFT to sender after operation.
+     * @param tokenId The NFT position token ID
+     * @param liquidityToRemove The amount of liquidity to remove (0 = remove all)
+     * @param tokenA The address of the first token (use address(0) for native cBTC)
+     * @param tokenB The address of the second token
      * @param amountAMin The minimum amount of tokenA to receive (slippage protection)
      * @param amountBMin The minimum amount of tokenB to receive (slippage protection)
      * @param to The recipient address for withdrawn tokens
@@ -123,9 +167,10 @@ interface IJuiceSwapGateway {
      * @return amountB Amount of tokenB received
      */
     function removeLiquidity(
+        uint256 tokenId,
+        uint128 liquidityToRemove,
         address tokenA,
         address tokenB,
-        uint256 liquidity,
         uint256 amountAMin,
         uint256 amountBMin,
         address to,
