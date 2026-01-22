@@ -204,4 +204,18 @@ interface IJuiceSwapGateway {
      * @return juiceAmount The amount of JUICE received
      */
     function jusdToJuice(uint256 jusdAmount) external view returns (uint256 juiceAmount);
+
+    /**
+     * @notice Returns the equivalent amount of svJUSD for a given amount of bridged stablecoin (e.g., USDT)
+     * @param usdAmount The amount of bridged stablecoin (in its native decimals, e.g., 6 for USDT)
+     * @return svJusdAmount The equivalent amount of svJUSD
+     */
+    function bridgedUsdToSvJusd(uint256 usdAmount) external view returns (uint256 svJusdAmount);
+
+    /**
+     * @notice Returns the equivalent amount of bridged stablecoin for a given amount of svJUSD
+     * @param svJusdAmount The amount of svJUSD
+     * @return usdAmount The equivalent amount of bridged stablecoin (in its native decimals)
+     */
+    function svJusdToBridgedUsd(uint256 svJusdAmount) external view returns (uint256 usdAmount);
 }
