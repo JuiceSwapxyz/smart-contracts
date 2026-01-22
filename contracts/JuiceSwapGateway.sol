@@ -688,11 +688,19 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
 
     /**
      * @dev Converts bridged token amount to JUSD amount (e.g., 6 decimals → 18 decimals)
+     * @notice For tokens with fewer decimals than JUSD (e.g., USDC/USDT with 6 decimals),
+     *         this is a lossless multiplication. For tokens with more decimals than JUSD
+     *         (rare edge case), this rounds DOWN which favors the protocol on deposits.
+     * @param bridgedAmount The amount in bridged token decimals
+     * @param bridgedDecimals The decimal count of the bridged token
+     * @return The equivalent amount in JUSD decimals (18)
      */
     function _bridgedToJusdAmount(uint256 bridgedAmount, uint8 bridgedDecimals) internal view returns (uint256) {
         if (bridgedDecimals < JUSD_DECIMALS) {
+            // Scale up: lossless (e.g., 1_000000 USDC → 1_000000000000000000 JUSD)
             return bridgedAmount * 10 ** (JUSD_DECIMALS - bridgedDecimals);
         } else if (bridgedDecimals > JUSD_DECIMALS) {
+            // Scale down: intentional floor division (rare case, favors protocol)
             return bridgedAmount / 10 ** (bridgedDecimals - JUSD_DECIMALS);
         }
         return bridgedAmount;
@@ -700,11 +708,20 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
 
     /**
      * @dev Converts JUSD amount to bridged token amount (e.g., 18 decimals → 6 decimals)
+     * @notice Rounds DOWN (floor) intentionally to favor the protocol on withdrawals.
+     *         This is standard DeFi practice: users receive slightly less on outbound transfers.
+     *         Maximum precision loss per conversion: 10^(JUSD_DECIMALS - bridgedDecimals) - 1 wei
+     *         Example for 6-decimal tokens: max loss is 999999999999 wei ≈ 0.000000999999 JUSD
+     * @param jusdAmount The amount in JUSD decimals (18)
+     * @param bridgedDecimals The decimal count of the bridged token
+     * @return The equivalent amount in bridged token decimals (rounded down)
      */
     function _jusdToBridgedAmount(uint256 jusdAmount, uint8 bridgedDecimals) internal view returns (uint256) {
         if (JUSD_DECIMALS > bridgedDecimals) {
+            // Scale down: intentional floor division (favors protocol on withdrawals)
             return jusdAmount / 10 ** (JUSD_DECIMALS - bridgedDecimals);
         } else if (JUSD_DECIMALS < bridgedDecimals) {
+            // Scale up: lossless (rare case)
             return jusdAmount * 10 ** (bridgedDecimals - JUSD_DECIMALS);
         }
         return jusdAmount;
@@ -712,6 +729,12 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
 
     /**
      * @dev Converts bridged token amount to svJUSD shares
+     * @notice Two-step conversion: bridged → JUSD (lossless for 6-decimal tokens) → svJUSD shares.
+     *         The svJUSD conversion uses ERC4626 convertToShares which may introduce
+     *         additional rounding based on the vault's share price.
+     * @param bridgedAmount The amount in bridged token decimals
+     * @param bridgedDecimals The decimal count of the bridged token
+     * @return The equivalent amount in svJUSD shares
      */
     function _bridgedToSvJusdAmount(uint256 bridgedAmount, uint8 bridgedDecimals) internal view returns (uint256) {
         uint256 jusdAmount = _bridgedToJusdAmount(bridgedAmount, bridgedDecimals);
