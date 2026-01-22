@@ -206,16 +206,44 @@ interface IJuiceSwapGateway {
     function jusdToJuice(uint256 jusdAmount) external view returns (uint256 juiceAmount);
 
     /**
-     * @notice Returns the equivalent amount of svJUSD for a given amount of bridged stablecoin (e.g., USDT)
-     * @param usdAmount The amount of bridged stablecoin (in its native decimals, e.g., 6 for USDT)
+     * @notice Returns the equivalent amount of svJUSD for a given amount of bridged stablecoin
+     * @param bridgedToken The bridged stablecoin address (e.g., USDC.e, USDT.e, ctUSD)
+     * @param amount The amount of bridged stablecoin (in its native decimals)
      * @return svJusdAmount The equivalent amount of svJUSD
      */
-    function bridgedUsdToSvJusd(uint256 usdAmount) external view returns (uint256 svJusdAmount);
+    function bridgedToSvJusd(address bridgedToken, uint256 amount) external view returns (uint256 svJusdAmount);
 
     /**
      * @notice Returns the equivalent amount of bridged stablecoin for a given amount of svJUSD
+     * @param bridgedToken The bridged stablecoin address (e.g., USDC.e, USDT.e, ctUSD)
      * @param svJusdAmount The amount of svJUSD
-     * @return usdAmount The equivalent amount of bridged stablecoin (in its native decimals)
+     * @return amount The equivalent amount of bridged stablecoin (in its native decimals)
      */
-    function svJusdToBridgedUsd(uint256 svJusdAmount) external view returns (uint256 usdAmount);
+    function svJusdToBridged(address bridgedToken, uint256 svJusdAmount) external view returns (uint256 amount);
+
+    /**
+     * @notice Checks if a token is a supported bridged stablecoin
+     * @param token The token address to check
+     * @return True if the token is a supported bridged stablecoin
+     */
+    function isBridgedToken(address token) external view returns (bool);
+
+    /**
+     * @notice Returns all supported bridged tokens
+     * @return Array of bridged token addresses
+     */
+    function getBridgedTokens() external view returns (address[] memory);
+
+    /**
+     * @notice Adds a bridged stablecoin that can be converted to JUSD via its bridge
+     * @param token The bridged stablecoin address
+     * @param bridge The StablecoinBridge contract for this token
+     */
+    function addBridgedToken(address token, address bridge) external;
+
+    /**
+     * @notice Removes a bridged stablecoin from the supported list
+     * @param token The bridged stablecoin address to remove
+     */
+    function removeBridgedToken(address token) external;
 }
