@@ -161,6 +161,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     mapping(address => BridgeConfig) public bridgeConfigs;
     /// @notice List of all supported bridged tokens (for enumeration)
     address[] public bridgedTokens;
+    /// @notice Maximum number of bridged tokens that can be added
+    uint8 public constant MAX_BRIDGED_TOKENS = 10;
     /// @notice Decimals of JUSD (cached for gas efficiency)
     uint8 public immutable JUSD_DECIMALS;
 
@@ -183,6 +185,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     error BridgedTokenAlreadyExists(address token);
     error BridgedTokenNotFound(address token);
     error InvalidBridgeConfig();
+    error TooManyBridgedTokens();
 
     event TokenRescued(address indexed token, address indexed to, uint256 amount);
     event NativeRescued(address indexed to, uint256 amount);
@@ -784,8 +787,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
                 uint256 jusdAmount = SV_JUSD.redeem(excessAmount, address(this), address(this));
                 config.bridge.burnAndSend(to, jusdAmount);
             } else {
-                // Return excess svJUSD directly (shouldn't happen in normal flow)
-                SafeERC20.safeTransfer(IERC20(actualToken), to, excessAmount);
+                // Unreachable: if actualToken is svJUSD, userToken must be JUSD (handled above)
+                // or a bridged token (handled in if-branch). JUICE maps to svJUSD but cannot
+                // be used as input (JuiceInputNotSupported), so this branch is never reached.
+                revert InvalidToken();
             }
         } else if (actualToken != address(0)) {
             // Return excess tokens directly
@@ -817,6 +822,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
      */
     function addBridgedToken(address token, address bridge) external onlyOwner {
         if (token == address(0) || bridge == address(0)) revert InvalidBridgeConfig();
+        if (bridgedTokens.length >= MAX_BRIDGED_TOKENS) revert TooManyBridgedTokens();
         if (bridgeConfigs[token].bridge != IStablecoinBridge(address(0))) {
             revert BridgedTokenAlreadyExists(token);
         }

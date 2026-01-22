@@ -2689,6 +2689,44 @@ describe("JuiceSwapGateway", function () {
           gateway.connect(owner).addBridgedToken(ethers.ZeroAddress, ethers.ZeroAddress)
         ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
       });
+
+      it("Should revert with TooManyBridgedTokens when limit exceeded", async function () {
+        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+
+        // Already have 3 tokens, add 7 more to reach limit of 10
+        for (let i = 0; i < 7; i++) {
+          const token = await MockERC20Factory.deploy(`Token${i}`, `TKN${i}`, 6);
+          const bridge = await MockBridgeFactory.deploy(
+            await token.getAddress(),
+            await jusd.getAddress(),
+            BRIDGE_LIMIT,
+            BRIDGE_WEEKS
+          );
+          await gateway.connect(owner).addBridgedToken(
+            await token.getAddress(),
+            await bridge.getAddress()
+          );
+        }
+
+        // 11th token should fail
+        const extraToken = await MockERC20Factory.deploy("Extra", "EXTRA", 6);
+        const extraBridge = await MockBridgeFactory.deploy(
+          await extraToken.getAddress(),
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        await expect(
+          gateway.connect(owner).addBridgedToken(
+            await extraToken.getAddress(),
+            await extraBridge.getAddress()
+          )
+        ).to.be.revertedWithCustomError(gateway, "TooManyBridgedTokens");
+      });
     });
 
     describe("Swap with Bridged Tokens", function () {
