@@ -8,8 +8,18 @@ pragma solidity ^0.8.20;
  *      - JUSD ↔ svJUSD conversions (for interest-bearing liquidity)
  *      - JUICE ↔ JUSD conversions (via Equity contract)
  *      - cBTC ↔ WcBTC wrapping
+ *      - Bridged stablecoins ↔ JUSD conversions (via StablecoinBridge)
  */
 interface IJuiceSwapGateway {
+    /// @notice Status information for a bridged stablecoin's bridge
+    struct BridgeStatus {
+        bool canMint;           // Can deposit bridged token (mint JUSD)?
+        bool canBurn;           // Can withdraw to bridged token (burn JUSD)?
+        uint256 mintCapacity;   // Remaining JUSD that can be minted (in JUSD decimals)
+        uint256 burnCapacity;   // Available bridged token for burns (in bridged token decimals)
+        string mintBlockReason; // Reason why minting is blocked (empty if canMint)
+        string burnBlockReason; // Reason why burning is blocked (empty if canBurn)
+    }
     /**
      * @notice Emitted when a swap is executed through the gateway
      * @param user The address that initiated the swap
@@ -246,4 +256,19 @@ interface IJuiceSwapGateway {
      * @param token The bridged stablecoin address to remove
      */
     function removeBridgedToken(address token) external;
+
+    /**
+     * @notice Returns comprehensive status information for a bridged token's bridge
+     * @dev Useful for frontends to check if operations will succeed before attempting them.
+     *      Checks include: bridge stopped, bridge expired, mint limit reached, burn liquidity.
+     * @param bridgedToken The bridged stablecoin address to check
+     * @return status The bridge status containing:
+     *         - canMint: Whether deposits (bridged → JUSD) are possible
+     *         - canBurn: Whether withdrawals (JUSD → bridged) are possible
+     *         - mintCapacity: Remaining JUSD mintable through this bridge
+     *         - burnCapacity: Available bridged tokens in bridge for withdrawals
+     *         - mintBlockReason: Human-readable reason if minting blocked
+     *         - burnBlockReason: Human-readable reason if burning blocked
+     */
+    function getBridgeStatus(address bridgedToken) external view returns (BridgeStatus memory status);
 }

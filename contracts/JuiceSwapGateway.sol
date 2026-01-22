@@ -575,6 +575,75 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         return address(bridgeConfigs[token].bridge) != address(0);
     }
 
+    /**
+     * @notice Returns comprehensive status information for a bridged token's bridge
+     * @dev Useful for frontends to check if operations will succeed before attempting them
+     * @param bridgedToken The bridged stablecoin address to check
+     * @return status The bridge status containing mint/burn capacity and block reasons
+     */
+    function getBridgeStatus(address bridgedToken) external view returns (BridgeStatus memory status) {
+        BridgeConfig storage config = bridgeConfigs[bridgedToken];
+
+        // Check if token is supported
+        if (address(config.bridge) == address(0)) {
+            return BridgeStatus({
+                canMint: false,
+                canBurn: false,
+                mintCapacity: 0,
+                burnCapacity: 0,
+                mintBlockReason: "Token not supported",
+                burnBlockReason: "Token not supported"
+            });
+        }
+
+        IStablecoinBridge bridge = config.bridge;
+
+        // === MINT CHECKS (bridged token → JUSD) ===
+        bool canMint = true;
+        string memory mintReason = "";
+        uint256 mintCapacity = 0;
+
+        // Check if bridge is stopped
+        if (bridge.stopped()) {
+            canMint = false;
+            mintReason = "Bridge stopped";
+        }
+        // Check if bridge is expired
+        else if (block.timestamp > bridge.horizon()) {
+            canMint = false;
+            mintReason = "Bridge expired";
+        }
+        // Check mint limit
+        else {
+            uint256 minted = bridge.minted();
+            uint256 limit = bridge.limit();
+            if (minted >= limit) {
+                canMint = false;
+                mintReason = "Limit reached";
+            } else {
+                // Remaining capacity in JUSD (18 decimals)
+                mintCapacity = limit - minted;
+            }
+        }
+
+        // === BURN CHECKS (JUSD → bridged token) ===
+        // Burn needs the bridge to have sufficient bridged token balance
+        address usdToken = bridge.usd();
+        uint256 bridgeBalance = IERC20(usdToken).balanceOf(address(bridge));
+
+        bool canBurn = bridgeBalance > 0;
+        string memory burnReason = canBurn ? "" : "Insufficient bridge liquidity";
+
+        return BridgeStatus({
+            canMint: canMint,
+            canBurn: canBurn,
+            mintCapacity: mintCapacity,
+            burnCapacity: bridgeBalance,  // In bridged token decimals
+            mintBlockReason: mintReason,
+            burnBlockReason: burnReason
+        });
+    }
+
     // ==================== Internal Functions ====================
 
     /**
