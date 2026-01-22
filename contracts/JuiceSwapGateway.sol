@@ -598,7 +598,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
             return (address(SV_JUSD), shares);
         } else {
             // Other tokens - direct transfer
-            IERC20(token).transferFrom(msg.sender, address(this), amount);
+            SafeERC20.safeTransferFrom(IERC20(token), msg.sender, address(this), amount);
             if (IERC20(token).allowance(address(this), address(SWAP_ROUTER)) < amount) {
                 SafeERC20.forceApprove(IERC20(token), address(SWAP_ROUTER), type(uint256).max);
             }
