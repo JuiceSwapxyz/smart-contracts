@@ -407,11 +407,16 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         _returnExcess(tokenA, actualTokenA, excessA, msg.sender);
         _returnExcess(tokenB, actualTokenB, excessB, msg.sender);
 
+        // Convert amounts back to user-facing token units for return values and event
+        // (amountA/amountB are currently in svJUSD terms if user passed JUSD)
+        uint256 userAmountA = tokenA == address(JUSD) ? _svJusdToJusdAmount(amountA) : amountA;
+        uint256 userAmountB = tokenB == address(JUSD) ? _svJusdToJusdAmount(amountB) : amountB;
+
         // Return NFT to user
         IERC721(address(POSITION_MANAGER)).safeTransferFrom(address(this), msg.sender, tokenId);
 
-        emit LiquidityIncreased(msg.sender, tokenId, amountA, amountB, liquidity);
-        return (amountA, amountB, liquidity);
+        emit LiquidityIncreased(msg.sender, tokenId, userAmountA, userAmountB, liquidity);
+        return (userAmountA, userAmountB, liquidity);
     }
 
     /**

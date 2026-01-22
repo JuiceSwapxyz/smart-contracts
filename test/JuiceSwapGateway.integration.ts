@@ -100,12 +100,16 @@ const isIntegrationTest = network.name === "citreaTestnet";
     return null;
   }
 
-  function findLiquidityIncreasedEvent(receipt: any): { liquidity: bigint } | null {
+  function findLiquidityIncreasedEvent(receipt: any): { amountA: bigint; amountB: bigint; liquidity: bigint } | null {
     for (const log of receipt.logs) {
       try {
         const parsed = gateway.interface.parseLog(log);
         if (parsed?.name === "LiquidityIncreased") {
-          return { liquidity: parsed.args.liquidity };
+          return {
+            amountA: parsed.args.amountA,
+            amountB: parsed.args.amountB,
+            liquidity: parsed.args.liquidity
+          };
         }
       } catch {
         // Not a gateway event
@@ -477,6 +481,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const eventData = findLiquidityIncreasedEvent(receipt);
       expect(eventData).to.not.be.null;
       console.log(`    Liquidity added: ${eventData!.liquidity}`);
+      console.log(`    Event amounts: ${ethers.formatUnits(eventData!.amountA, 6)} JUSD, ${ethers.formatUnits(eventData!.amountB, 18)} WcBTC`);
 
       // Verify NFT returned to user
       const owner = await positionManager.ownerOf(positionTokenId);
@@ -494,6 +499,17 @@ const isIntegrationTest = network.name === "citreaTestnet";
       console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD, ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC`);
       expect(jusdSpent).to.be.gt(0);
       expect(wcbtcSpent).to.be.gt(0);
+
+      // Verify event amounts match balance changes
+      // WcBTC: exact match (no conversion)
+      expect(eventData!.amountB).to.equal(wcbtcSpent);
+      // JUSD: close match (small variance due to svJUSD exchange rate conversions)
+      // Allow 1% tolerance for the JUSD→svJUSD→JUSD round-trip
+      const jusdDiff = eventData!.amountA > jusdSpent
+        ? eventData!.amountA - jusdSpent
+        : jusdSpent - eventData!.amountA;
+      const tolerance = jusdSpent / 100n; // 1%
+      expect(jusdDiff).to.be.lte(tolerance);
     });
 
     it("6c. Should remove partial liquidity", async function () {
@@ -701,6 +717,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const eventData = findLiquidityIncreasedEvent(receipt);
       expect(eventData).to.not.be.null;
       console.log(`    Liquidity added: ${eventData!.liquidity}`);
+      console.log(`    Event amounts: ${ethers.formatUnits(eventData!.amountA, 6)} JUSD, ${ethers.formatUnits(eventData!.amountB, 18)} cBTC`);
 
       // Verify NFT returned to user
       const owner = await positionManager.ownerOf(positionTokenId);
@@ -715,6 +732,17 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdSpent = jusdBefore - jusdAfter;
       console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD`);
       expect(jusdSpent).to.be.gt(0);
+
+      // Verify event amounts
+      // JUSD: close match (small variance due to svJUSD exchange rate conversions)
+      const jusdDiff = eventData!.amountA > jusdSpent
+        ? eventData!.amountA - jusdSpent
+        : jusdSpent - eventData!.amountA;
+      const tolerance = jusdSpent / 100n; // 1%
+      expect(jusdDiff).to.be.lte(tolerance);
+      // Native cBTC: verify it's non-zero and at most what was sent (can't verify exact due to gas)
+      expect(eventData!.amountB).to.be.gt(0);
+      expect(eventData!.amountB).to.be.lte(cbtcAmount);
     });
 
     it("7c. Should remove liquidity and receive native cBTC", async function () {
