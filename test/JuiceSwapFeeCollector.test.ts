@@ -133,9 +133,10 @@ async function createAndInitializePool(
   // Initialize pool with price
   await pool.initialize(sqrtPriceX96);
 
-  // Increase observation cardinality for TWAP
+  // Increase observation cardinality for TWAP (JUICE1-14: needs twapPeriod/blockTime + 1)
+  // For testing with 1800s TWAP and 2s blocks, we need 901 cardinality
   // NOTE: Actual cardinality won't increase until next observation is written
-  await pool.increaseObservationCardinalityNext(100);
+  await pool.increaseObservationCardinalityNext(1000);
 
   return pool;
 }
@@ -724,6 +725,49 @@ describe.skip("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function ()
       await expect(
         feeCollector.connect(owner).setProtectionParams(1800, 1500) // 15% (too high)
       ).to.be.revertedWithCustomError(feeCollector, "InvalidParams");
+    });
+
+    it("Should allow owner to update expected block time", async function () {
+      const { feeCollector, owner } = await loadFixture(deployFeeCollectorFixture);
+
+      const newBlockTime = 12; // Ethereum mainnet
+
+      await expect(
+        feeCollector.connect(owner).setExpectedBlockTime(newBlockTime)
+      ).to.emit(feeCollector, "ExpectedBlockTimeUpdated")
+        .withArgs(newBlockTime);
+
+      expect(await feeCollector.expectedBlockTime()).to.equal(newBlockTime);
+    });
+
+    it("Should revert if expected block time is zero", async function () {
+      const { feeCollector, owner } = await loadFixture(deployFeeCollectorFixture);
+
+      await expect(
+        feeCollector.connect(owner).setExpectedBlockTime(0)
+      ).to.be.revertedWithCustomError(feeCollector, "InvalidParams");
+    });
+
+    it("Should revert if expected block time exceeds 60 seconds", async function () {
+      const { feeCollector, owner } = await loadFixture(deployFeeCollectorFixture);
+
+      await expect(
+        feeCollector.connect(owner).setExpectedBlockTime(61)
+      ).to.be.revertedWithCustomError(feeCollector, "InvalidParams");
+    });
+
+    it("Should revert if non-owner tries to set expected block time", async function () {
+      const { feeCollector, unauthorized } = await loadFixture(deployFeeCollectorFixture);
+
+      await expect(
+        feeCollector.connect(unauthorized).setExpectedBlockTime(12)
+      ).to.be.revertedWithCustomError(feeCollector, "OwnableUnauthorizedAccount");
+    });
+
+    it("Should initialize expectedBlockTime to 2 (Citrea default)", async function () {
+      const { feeCollector } = await loadFixture(deployFeeCollectorFixture);
+
+      expect(await feeCollector.expectedBlockTime()).to.equal(2);
     });
   });
 

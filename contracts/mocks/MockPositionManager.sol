@@ -47,6 +47,10 @@ contract MockPositionManager is ERC721 {
     uint256 private _mockDecreaseAmount0;
     uint256 private _mockDecreaseAmount1;
 
+    uint128 private _mockIncreaseLiquidity;
+    uint256 private _mockIncreaseAmount0;
+    uint256 private _mockIncreaseAmount1;
+
     constructor() ERC721("Mock Position", "MPOS") {
         _factory = new MockFactory();
     }
@@ -99,6 +103,49 @@ contract MockPositionManager is ERC721 {
         uint256 amount0Min;
         uint256 amount1Min;
         uint256 deadline;
+    }
+
+    struct IncreaseLiquidityParams {
+        uint256 tokenId;
+        uint256 amount0Desired;
+        uint256 amount1Desired;
+        uint256 amount0Min;
+        uint256 amount1Min;
+        uint256 deadline;
+    }
+
+    /**
+     * @notice Mock increaseLiquidity function
+     */
+    function increaseLiquidity(IncreaseLiquidityParams calldata params)
+        external
+        payable
+        returns (uint128 liquidity, uint256 amount0, uint256 amount1)
+    {
+        require(
+            ownerOf(params.tokenId) == msg.sender || getApproved(params.tokenId) == msg.sender,
+            "Not authorized"
+        );
+
+        // Use preset values if available, otherwise use desired amounts
+        liquidity = _mockIncreaseLiquidity > 0 ? _mockIncreaseLiquidity : 100;
+        amount0 = _mockIncreaseAmount0 > 0 ? _mockIncreaseAmount0 : params.amount0Desired;
+        amount1 = _mockIncreaseAmount1 > 0 ? _mockIncreaseAmount1 : params.amount1Desired;
+
+        Position storage pos = _positions[params.tokenId];
+
+        // Transfer tokens from sender (like mint() does)
+        if (amount0 > 0 && pos.token0 != address(0)) {
+            IERC20(pos.token0).transferFrom(msg.sender, address(this), amount0);
+        }
+        if (amount1 > 0 && pos.token1 != address(0)) {
+            IERC20(pos.token1).transferFrom(msg.sender, address(this), amount1);
+        }
+
+        // Update position liquidity
+        pos.liquidity += liquidity;
+
+        return (liquidity, amount0, amount1);
     }
 
     /**
@@ -221,6 +268,12 @@ contract MockPositionManager is ERC721 {
     function setDecreaseResult(uint256 amount0, uint256 amount1) external {
         _mockDecreaseAmount0 = amount0;
         _mockDecreaseAmount1 = amount1;
+    }
+
+    function setIncreaseResult(uint128 liquidity, uint256 amount0, uint256 amount1) external {
+        _mockIncreaseLiquidity = liquidity;
+        _mockIncreaseAmount0 = amount0;
+        _mockIncreaseAmount1 = amount1;
     }
 
     function setPositionData(

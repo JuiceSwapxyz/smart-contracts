@@ -54,4 +54,12 @@ contract MockERC4626 is ERC4626 {
     function accrueInterest(uint256 interestAmount) external {
         _totalAssets += interestAmount;
     }
+
+    /**
+     * @notice Mint shares for testing (allows MockSwapRouter to mint output tokens)
+     */
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+        _totalAssets += amount; // Keep totalAssets in sync
+    }
 }

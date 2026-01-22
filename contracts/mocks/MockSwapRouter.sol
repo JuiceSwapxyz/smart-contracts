@@ -9,8 +9,13 @@ interface IMintableERC20 {
 
 /**
  * @title MockSwapRouter
- * @notice Mock implementation of Uniswap V3 SwapRouter for testing
- * @dev Simulates swap behavior without actual pool logic
+ * @notice Mock implementation of Uniswap V3 SwapRouter02 for testing
+ * @dev Simulates swap behavior without actual pool logic.
+ *      Accurately simulates real SwapRouter02 behavior where tokens are
+ *      pulled via transferFrom from the caller (Gateway) during the pool callback.
+ *
+ *      SwapRouter02's exactInputSingle does NOT have a deadline parameter -
+ *      that was only in the original SwapRouter.
  */
 contract MockSwapRouter {
     uint256 private _outputAmount;
@@ -20,7 +25,6 @@ contract MockSwapRouter {
         address tokenOut;
         uint24 fee;
         address recipient;
-        uint256 deadline;
         uint256 amountIn;
         uint256 amountOutMinimum;
         uint160 sqrtPriceLimitX96;
@@ -35,13 +39,16 @@ contract MockSwapRouter {
 
     /**
      * @notice Mock exactInputSingle swap
+     * @dev Simulates real SwapRouter02 behavior:
+     *      The router pulls tokens from msg.sender via transferFrom during the
+     *      pool callback. The caller must have approved the router for the input amount.
      */
     function exactInputSingle(ExactInputSingleParams calldata params)
         external
         payable
         returns (uint256 amountOut)
     {
-        // Transfer input token from sender
+        // Pull input tokens from caller (simulates pool callback behavior)
         IERC20(params.tokenIn).transferFrom(msg.sender, address(this), params.amountIn);
 
         // Calculate output amount
