@@ -989,7 +989,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
      */
     function rescueToken(address token, address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert InvalidToken();
-        IERC20(token).transfer(to, amount);
+        SafeERC20.safeTransfer(IERC20(token), to, amount);
         emit TokenRescued(token, to, amount);
     }
 
