@@ -3049,5 +3049,163 @@ describe("JuiceSwapGateway", function () {
         expect(tokens.length).to.equal(3);
       });
     });
+
+    describe("getBridgeStatus", function () {
+      const bridgeAmount = 10_000_000n * 10n ** 6n; // 10M with 6 decimals (from fixture)
+
+      it("Should return healthy status for properly configured bridge", async function () {
+        const { gateway, usdc } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const status = await gateway.getBridgeStatus(await usdc.getAddress());
+
+        expect(status.canMint).to.be.true;
+        expect(status.canBurn).to.be.true;
+        expect(status.mintCapacity).to.equal(BRIDGE_LIMIT);
+        expect(status.burnCapacity).to.equal(bridgeAmount);
+        expect(status.mintBlockReason).to.equal("");
+        expect(status.burnBlockReason).to.equal("");
+      });
+
+      it("Should return unsupported status for unknown token", async function () {
+        const { gateway } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Use a random address that's not a bridged token
+        const randomAddress = ethers.Wallet.createRandom().address;
+        const status = await gateway.getBridgeStatus(randomAddress);
+
+        expect(status.canMint).to.be.false;
+        expect(status.canBurn).to.be.false;
+        expect(status.mintCapacity).to.equal(0);
+        expect(status.burnCapacity).to.equal(0);
+        expect(status.mintBlockReason).to.equal("Token not supported");
+        expect(status.burnBlockReason).to.equal("Token not supported");
+      });
+
+      it("Should return stopped status when bridge is stopped", async function () {
+        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Stop the bridge
+        await usdcBridge.setStopped(true);
+
+        const status = await gateway.getBridgeStatus(await usdc.getAddress());
+
+        expect(status.canMint).to.be.false;
+        expect(status.canBurn).to.be.true; // Burn should still work
+        expect(status.mintCapacity).to.equal(0);
+        expect(status.burnCapacity).to.equal(bridgeAmount); // Bridge still has liquidity
+        expect(status.mintBlockReason).to.equal("Bridge stopped");
+        expect(status.burnBlockReason).to.equal("");
+      });
+
+      it("Should return expired status when bridge horizon is passed", async function () {
+        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Get the bridge horizon and advance time past it
+        const horizon = await usdcBridge.horizon();
+        await time.increaseTo(horizon + 1n);
+
+        const status = await gateway.getBridgeStatus(await usdc.getAddress());
+
+        expect(status.canMint).to.be.false;
+        expect(status.canBurn).to.be.true; // Burn should still work
+        expect(status.mintCapacity).to.equal(0);
+        expect(status.burnCapacity).to.equal(bridgeAmount);
+        expect(status.mintBlockReason).to.equal("Bridge expired");
+        expect(status.burnBlockReason).to.equal("");
+      });
+
+      it("Should return limit reached when mint limit is exhausted", async function () {
+        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Set minted to the limit
+        await usdcBridge.setMinted(BRIDGE_LIMIT);
+
+        const status = await gateway.getBridgeStatus(await usdc.getAddress());
+
+        expect(status.canMint).to.be.false;
+        expect(status.canBurn).to.be.true; // Burn should still work
+        expect(status.mintCapacity).to.equal(0);
+        expect(status.burnCapacity).to.equal(bridgeAmount);
+        expect(status.mintBlockReason).to.equal("Limit reached");
+        expect(status.burnBlockReason).to.equal("");
+      });
+
+      it("Should return insufficient liquidity when bridge has no tokens", async function () {
+        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        // Deploy a new bridged token with empty bridge
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const newToken = await MockERC20Factory.deploy("New Token", "NEW", 6);
+
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+        const newBridge = await MockBridgeFactory.deploy(
+          await newToken.getAddress(),
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        // Add to gateway but don't fund the bridge
+        await gateway.connect(owner).addBridgedToken(await newToken.getAddress(), await newBridge.getAddress());
+
+        const status = await gateway.getBridgeStatus(await newToken.getAddress());
+
+        expect(status.canMint).to.be.true; // Can still mint
+        expect(status.canBurn).to.be.false; // Can't burn without liquidity
+        expect(status.mintCapacity).to.equal(BRIDGE_LIMIT);
+        expect(status.burnCapacity).to.equal(0);
+        expect(status.mintBlockReason).to.equal("");
+        expect(status.burnBlockReason).to.equal("Insufficient bridge liquidity");
+      });
+
+      it("Should return accurate remaining mint capacity", async function () {
+        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Set minted to 40% of limit
+        const mintedAmount = BRIDGE_LIMIT * 40n / 100n;
+        await usdcBridge.setMinted(mintedAmount);
+
+        const status = await gateway.getBridgeStatus(await usdc.getAddress());
+
+        expect(status.canMint).to.be.true;
+        expect(status.canBurn).to.be.true;
+        expect(status.mintCapacity).to.equal(BRIDGE_LIMIT - mintedAmount);
+        expect(status.burnCapacity).to.equal(bridgeAmount);
+        expect(status.mintBlockReason).to.equal("");
+        expect(status.burnBlockReason).to.equal("");
+      });
+
+      it("Should handle combined failure: stopped bridge with no liquidity", async function () {
+        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        // Deploy a new bridged token with empty bridge
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const newToken = await MockERC20Factory.deploy("New Token", "NEW", 6);
+
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+        const newBridge = await MockBridgeFactory.deploy(
+          await newToken.getAddress(),
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        // Add to gateway but don't fund the bridge
+        await gateway.connect(owner).addBridgedToken(await newToken.getAddress(), await newBridge.getAddress());
+
+        // Stop the bridge
+        await newBridge.setStopped(true);
+
+        const status = await gateway.getBridgeStatus(await newToken.getAddress());
+
+        // Both mint and burn should be blocked for different reasons
+        expect(status.canMint).to.be.false;
+        expect(status.canBurn).to.be.false;
+        expect(status.mintCapacity).to.equal(0);
+        expect(status.burnCapacity).to.equal(0);
+        expect(status.mintBlockReason).to.equal("Bridge stopped");
+        expect(status.burnBlockReason).to.equal("Insufficient bridge liquidity");
+      });
+    });
   });
 });
