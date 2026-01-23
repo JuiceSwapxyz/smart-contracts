@@ -2,7 +2,9 @@
 pragma solidity ^0.8.20;
 
 import {IJuiceSwapGateway} from "./interfaces/IJuiceSwapGateway.sol";
+import {IStablecoinBridge} from "./interfaces/IStablecoinBridge.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
@@ -149,6 +151,21 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     INonfungiblePositionManager public immutable POSITION_MANAGER;
     IUniswapV3Factory public immutable FACTORY;
 
+    /// @notice Configuration for a bridged stablecoin
+    struct BridgeConfig {
+        IStablecoinBridge bridge;
+        uint8 decimals;
+    }
+
+    /// @notice Mapping of bridged stablecoin address to its bridge configuration
+    mapping(address => BridgeConfig) public bridgeConfigs;
+    /// @notice List of all supported bridged tokens (for enumeration)
+    address[] public bridgedTokens;
+    /// @notice Maximum number of bridged tokens that can be added
+    uint8 public constant MAX_BRIDGED_TOKENS = 10;
+    /// @notice Decimals of JUSD (cached for gas efficiency)
+    uint8 public immutable JUSD_DECIMALS;
+
     address private constant NATIVE_TOKEN = address(0);
     uint24 public defaultFee = 3000; // 0.3% default fee tier
 
@@ -164,10 +181,17 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     error InvalidFee(uint24 fee);
     error TokenMismatch(address expected0, address expected1, address provided0, address provided1);
     error InsufficientLiquidity(uint128 requested, uint128 available);
+    error InvalidTokenPair(address tokenA, address tokenB);
+    error BridgedTokenAlreadyExists(address token);
+    error BridgedTokenNotFound(address token);
+    error InvalidBridgeConfig();
+    error TooManyBridgedTokens();
 
     event TokenRescued(address indexed token, address indexed to, uint256 amount);
     event NativeRescued(address indexed to, uint256 amount);
     event DefaultFeeUpdated(uint24 oldFee, uint24 newFee);
+    event BridgedTokenAdded(address indexed token, address indexed bridge, uint8 decimals);
+    event BridgedTokenRemoved(address indexed token);
 
     /**
      * @notice Initializes the JuiceSwap Gateway for Uniswap V3
@@ -193,6 +217,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         SWAP_ROUTER = ISwapRouter(_swapRouter);
         POSITION_MANAGER = INonfungiblePositionManager(_positionManager);
         FACTORY = IUniswapV3Factory(INonfungiblePositionManager(_positionManager).factory());
+        JUSD_DECIMALS = IERC20Metadata(_jusd).decimals();
 
         // Pre-approve tokens for efficiency
         JUSD.approve(address(SV_JUSD), type(uint256).max);
@@ -268,6 +293,12 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     ) external payable nonReentrant whenNotPaused returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
         if (block.timestamp > deadline) revert DeadlineExpired();
 
+        // Prevent invalid token pairs where both tokens convert to the same actual token
+        // e.g., USDT + JUSD would both become svJUSD
+        if (_getActualToken(tokenA) == _getActualToken(tokenB)) {
+            revert InvalidTokenPair(tokenA, tokenB);
+        }
+
         // Use defaultFee when fee is 0 (JUICE1-6 fix)
         uint24 effectiveFee = fee == 0 ? defaultFee : fee;
 
@@ -285,8 +316,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
                 : (actualTokenB, actualTokenA, actualAmountBDesired, actualAmountADesired);
 
         // Calculate minimum amounts for actual tokens
-        uint256 actualAmountAMin = tokenA == address(JUSD) ? _jusdToSvJusdAmount(amountAMin) : amountAMin;
-        uint256 actualAmountBMin = tokenB == address(JUSD) ? _jusdToSvJusdAmount(amountBMin) : amountBMin;
+        uint256 actualAmountAMin = _toActualMinAmount(tokenA, amountAMin);
+        uint256 actualAmountBMin = _toActualMinAmount(tokenB, amountBMin);
 
         (uint256 amount0Min, uint256 amount1Min) =
             isAToken0
@@ -364,13 +395,13 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         // Transfer NFT to this contract (only after validation passes)
         IERC721(address(POSITION_MANAGER)).transferFrom(msg.sender, address(this), tokenId);
 
-        // Convert input tokens (JUSD → svJUSD)
+        // Convert input tokens (JUSD/bridged USD → svJUSD)
         (address actualTokenA, uint256 actualAmountADesired) = _handleTokenIn(tokenA, amountADesired);
         (address actualTokenB, uint256 actualAmountBDesired) = _handleTokenIn(tokenB, amountBDesired);
 
         // Calculate minimum amounts for actual tokens
-        uint256 actualAmountAMin = tokenA == address(JUSD) ? _jusdToSvJusdAmount(amountAMin) : amountAMin;
-        uint256 actualAmountBMin = tokenB == address(JUSD) ? _jusdToSvJusdAmount(amountBMin) : amountBMin;
+        uint256 actualAmountAMin = _toActualMinAmount(tokenA, amountAMin);
+        uint256 actualAmountBMin = _toActualMinAmount(tokenB, amountBMin);
 
         // Cache token ordering comparison
         bool isAToken0 = actualTokenA < actualTokenB;
@@ -408,9 +439,9 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         _returnExcess(tokenB, actualTokenB, excessB, msg.sender);
 
         // Convert amounts back to user-facing token units for return values and event
-        // (amountA/amountB are currently in svJUSD terms if user passed JUSD)
-        uint256 userAmountA = tokenA == address(JUSD) ? _svJusdToJusdAmount(amountA) : amountA;
-        uint256 userAmountB = tokenB == address(JUSD) ? _svJusdToJusdAmount(amountB) : amountB;
+        // (amountA/amountB are currently in svJUSD terms if user passed JUSD or bridged USD)
+        uint256 userAmountA = _toUserAmount(tokenA, amountA);
+        uint256 userAmountB = _toUserAmount(tokenB, amountB);
 
         // Return NFT to user
         IERC721(address(POSITION_MANAGER)).safeTransferFrom(address(this), msg.sender, tokenId);
@@ -458,8 +489,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         address actualTokenB = _getActualToken(tokenB);
 
         // Calculate minimum amounts for actual tokens
-        uint256 actualAmountAMin = tokenA == address(JUSD) ? _jusdToSvJusdAmount(amountAMin) : amountAMin;
-        uint256 actualAmountBMin = tokenB == address(JUSD) ? _jusdToSvJusdAmount(amountBMin) : amountBMin;
+        uint256 actualAmountAMin = _toActualMinAmount(tokenA, amountAMin);
+        uint256 actualAmountBMin = _toActualMinAmount(tokenB, amountBMin);
 
         // Determine token order
         bool isAToken0 = actualTokenA < actualTokenB;
@@ -526,6 +557,93 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         return JUICE.calculateShares(jusdAmount);
     }
 
+    function bridgedToSvJusd(address bridgedToken, uint256 amount) external view returns (uint256) {
+        BridgeConfig storage config = bridgeConfigs[bridgedToken];
+        if (address(config.bridge) == address(0)) revert BridgedTokenNotFound(bridgedToken);
+        uint256 jusdAmount = _bridgedToJusdAmount(amount, config.decimals);
+        return SV_JUSD.convertToShares(jusdAmount);
+    }
+
+    function svJusdToBridged(address bridgedToken, uint256 svJusdAmount) external view returns (uint256) {
+        BridgeConfig storage config = bridgeConfigs[bridgedToken];
+        if (address(config.bridge) == address(0)) revert BridgedTokenNotFound(bridgedToken);
+        uint256 jusdAmount = SV_JUSD.convertToAssets(svJusdAmount);
+        return _jusdToBridgedAmount(jusdAmount, config.decimals);
+    }
+
+    function isBridgedToken(address token) external view returns (bool) {
+        return address(bridgeConfigs[token].bridge) != address(0);
+    }
+
+    /**
+     * @notice Returns comprehensive status information for a bridged token's bridge
+     * @dev Useful for frontends to check if operations will succeed before attempting them
+     * @param bridgedToken The bridged stablecoin address to check
+     * @return status The bridge status containing mint/burn capacity and block reasons
+     */
+    function getBridgeStatus(address bridgedToken) external view returns (BridgeStatus memory status) {
+        BridgeConfig storage config = bridgeConfigs[bridgedToken];
+
+        // Check if token is supported
+        if (address(config.bridge) == address(0)) {
+            return BridgeStatus({
+                canMint: false,
+                canBurn: false,
+                mintCapacity: 0,
+                burnCapacity: 0,
+                mintBlockReason: "Token not supported",
+                burnBlockReason: "Token not supported"
+            });
+        }
+
+        IStablecoinBridge bridge = config.bridge;
+
+        // === MINT CHECKS (bridged token → JUSD) ===
+        bool canMint = true;
+        string memory mintReason = "";
+        uint256 mintCapacity = 0;
+
+        // Check if bridge is stopped
+        if (bridge.stopped()) {
+            canMint = false;
+            mintReason = "Bridge stopped";
+        }
+        // Check if bridge is expired
+        else if (block.timestamp > bridge.horizon()) {
+            canMint = false;
+            mintReason = "Bridge expired";
+        }
+        // Check mint limit
+        else {
+            uint256 minted = bridge.minted();
+            uint256 limit = bridge.limit();
+            if (minted >= limit) {
+                canMint = false;
+                mintReason = "Limit reached";
+            } else {
+                // Remaining capacity in JUSD (18 decimals)
+                mintCapacity = limit - minted;
+            }
+        }
+
+        // === BURN CHECKS (JUSD → bridged token) ===
+        // Burn needs the bridge to have sufficient bridged token balance
+        address usdToken = bridge.usd();
+        uint256 bridgeBalance = IERC20(usdToken).balanceOf(address(bridge));
+
+        bool canBurn = bridgeBalance > 0;
+        string memory burnReason = canBurn ? "" : "Insufficient bridge liquidity";
+
+        return BridgeStatus({
+            canMint: canMint,
+            canBurn: canBurn,
+            mintCapacity: mintCapacity,
+            burnCapacity: bridgeBalance,  // In bridged token decimals
+            mintBlockReason: mintReason,
+            burnBlockReason: burnReason
+        });
+    }
+
     // ==================== Internal Functions ====================
 
     /**
@@ -546,9 +664,23 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
             // JUICE cannot be used as input due to Equity flash loan protection.
             // Users must redeem JUICE directly: JUICE.redeem() → then swap the JUSD.
             revert JuiceInputNotSupported();
+        }
+
+        // Check if token is a bridged stablecoin
+        BridgeConfig storage config = bridgeConfigs[token];
+        if (address(config.bridge) != address(0)) {
+            // Bridged USD (e.g., USDC.e, USDT.e, ctUSD) → JUSD (via Bridge) → svJUSD
+            SafeERC20.safeTransferFrom(IERC20(token), msg.sender, address(this), amount);
+            // Bridge mints JUSD (handles decimal conversion internally)
+            config.bridge.mint(amount);
+            // Convert bridged USD amount to JUSD amount (e.g., 6 decimals → 18 decimals)
+            uint256 jusdAmount = _bridgedToJusdAmount(amount, config.decimals);
+            // Deposit JUSD into savings vault
+            uint256 shares = SV_JUSD.deposit(jusdAmount, address(this));
+            return (address(SV_JUSD), shares);
         } else {
             // Other tokens - direct transfer
-            IERC20(token).transferFrom(msg.sender, address(this), amount);
+            SafeERC20.safeTransferFrom(IERC20(token), msg.sender, address(this), amount);
             if (IERC20(token).allowance(address(this), address(SWAP_ROUTER)) < amount) {
                 SafeERC20.forceApprove(IERC20(token), address(SWAP_ROUTER), type(uint256).max);
             }
@@ -577,11 +709,22 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
             // svJUSD → JUSD → JUICE
             uint256 jusdAmount = SV_JUSD.redeem(actualAmount, address(this), address(this));
             uint256 juiceAmount = JUICE.invest(jusdAmount, 0);
-            JUICE.transfer(to, juiceAmount);
+            SafeERC20.safeTransfer(IERC20(address(JUICE)), to, juiceAmount);
             return juiceAmount;
+        }
+
+        // Check if token is a bridged stablecoin
+        BridgeConfig storage config = bridgeConfigs[token];
+        if (address(config.bridge) != address(0)) {
+            // svJUSD → JUSD → Bridged USD (e.g., USDC.e, USDT.e, ctUSD)
+            uint256 jusdAmount = SV_JUSD.redeem(actualAmount, address(this), address(this));
+            // Burn JUSD via bridge to get bridged USD sent to recipient
+            config.bridge.burnAndSend(to, jusdAmount);
+            // Return amount in bridged USD decimals
+            return _jusdToBridgedAmount(jusdAmount, config.decimals);
         } else {
             // Other tokens - direct transfer
-            IERC20(token).transfer(to, actualAmount);
+            SafeERC20.safeTransfer(IERC20(token), to, actualAmount);
             return actualAmount;
         }
     }
@@ -593,6 +736,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         if (token == NATIVE_TOKEN) return address(WCBTC);
         if (token == address(JUSD)) return address(SV_JUSD);
         if (token == address(JUICE)) return address(SV_JUSD); // JUICE swaps through equity
+        // Check if token is a bridged stablecoin
+        if (address(bridgeConfigs[token].bridge) != address(0)) return address(SV_JUSD);
         return token;
     }
 
@@ -608,6 +753,92 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
      */
     function _svJusdToJusdAmount(uint256 svJusdAmount) internal view returns (uint256) {
         return SV_JUSD.convertToAssets(svJusdAmount);
+    }
+
+    /**
+     * @dev Converts bridged token amount to JUSD amount (e.g., 6 decimals → 18 decimals)
+     * @notice For tokens with fewer decimals than JUSD (e.g., USDC/USDT with 6 decimals),
+     *         this is a lossless multiplication. For tokens with more decimals than JUSD
+     *         (rare edge case), this rounds DOWN which favors the protocol on deposits.
+     * @param bridgedAmount The amount in bridged token decimals
+     * @param bridgedDecimals The decimal count of the bridged token
+     * @return The equivalent amount in JUSD decimals (18)
+     */
+    function _bridgedToJusdAmount(uint256 bridgedAmount, uint8 bridgedDecimals) internal view returns (uint256) {
+        if (bridgedDecimals < JUSD_DECIMALS) {
+            // Scale up: lossless (e.g., 1_000000 USDC → 1_000000000000000000 JUSD)
+            return bridgedAmount * 10 ** (JUSD_DECIMALS - bridgedDecimals);
+        } else if (bridgedDecimals > JUSD_DECIMALS) {
+            // Scale down: intentional floor division (rare case, favors protocol)
+            return bridgedAmount / 10 ** (bridgedDecimals - JUSD_DECIMALS);
+        }
+        return bridgedAmount;
+    }
+
+    /**
+     * @dev Converts JUSD amount to bridged token amount (e.g., 18 decimals → 6 decimals)
+     * @notice Rounds DOWN (floor) intentionally to favor the protocol on withdrawals.
+     *         This is standard DeFi practice: users receive slightly less on outbound transfers.
+     *         Maximum precision loss per conversion: 10^(JUSD_DECIMALS - bridgedDecimals) - 1 wei
+     *         Example for 6-decimal tokens: max loss is 999999999999 wei ≈ 0.000000999999 JUSD
+     * @param jusdAmount The amount in JUSD decimals (18)
+     * @param bridgedDecimals The decimal count of the bridged token
+     * @return The equivalent amount in bridged token decimals (rounded down)
+     */
+    function _jusdToBridgedAmount(uint256 jusdAmount, uint8 bridgedDecimals) internal view returns (uint256) {
+        if (JUSD_DECIMALS > bridgedDecimals) {
+            // Scale down: intentional floor division (favors protocol on withdrawals)
+            return jusdAmount / 10 ** (JUSD_DECIMALS - bridgedDecimals);
+        } else if (JUSD_DECIMALS < bridgedDecimals) {
+            // Scale up: lossless (rare case)
+            return jusdAmount * 10 ** (bridgedDecimals - JUSD_DECIMALS);
+        }
+        return jusdAmount;
+    }
+
+    /**
+     * @dev Converts bridged token amount to svJUSD shares
+     * @notice Two-step conversion: bridged → JUSD (lossless for 6-decimal tokens) → svJUSD shares.
+     *         The svJUSD conversion uses ERC4626 convertToShares which may introduce
+     *         additional rounding based on the vault's share price.
+     * @param bridgedAmount The amount in bridged token decimals
+     * @param bridgedDecimals The decimal count of the bridged token
+     * @return The equivalent amount in svJUSD shares
+     */
+    function _bridgedToSvJusdAmount(uint256 bridgedAmount, uint8 bridgedDecimals) internal view returns (uint256) {
+        uint256 jusdAmount = _bridgedToJusdAmount(bridgedAmount, bridgedDecimals);
+        return SV_JUSD.convertToShares(jusdAmount);
+    }
+
+    /**
+     * @dev Converts user-facing min amount to actual token min amount
+     */
+    function _toActualMinAmount(address userToken, uint256 minAmount) internal view returns (uint256) {
+        if (userToken == address(JUSD)) {
+            return _jusdToSvJusdAmount(minAmount);
+        }
+        // Check if token is a bridged stablecoin
+        BridgeConfig storage config = bridgeConfigs[userToken];
+        if (address(config.bridge) != address(0)) {
+            return _bridgedToSvJusdAmount(minAmount, config.decimals);
+        }
+        return minAmount;
+    }
+
+    /**
+     * @dev Converts actual token amount back to user-facing token amount
+     */
+    function _toUserAmount(address userToken, uint256 actualAmount) internal view returns (uint256) {
+        if (userToken == address(JUSD)) {
+            return _svJusdToJusdAmount(actualAmount);
+        }
+        // Check if token is a bridged stablecoin
+        BridgeConfig storage config = bridgeConfigs[userToken];
+        if (address(config.bridge) != address(0)) {
+            uint256 jusdAmount = _svJusdToJusdAmount(actualAmount);
+            return _jusdToBridgedAmount(jusdAmount, config.decimals);
+        }
+        return actualAmount;
     }
 
     /**
@@ -640,9 +871,22 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
             WCBTC.withdraw(excessAmount);
             (bool success, ) = to.call{value: excessAmount}("");
             if (!success) revert TransferFailed();
+        } else if (actualToken == address(SV_JUSD)) {
+            // Check if userToken is a bridged stablecoin
+            BridgeConfig storage config = bridgeConfigs[userToken];
+            if (address(config.bridge) != address(0)) {
+                // Convert excess svJUSD back to bridged USD via JUSD
+                uint256 jusdAmount = SV_JUSD.redeem(excessAmount, address(this), address(this));
+                config.bridge.burnAndSend(to, jusdAmount);
+            } else {
+                // Unreachable: if actualToken is svJUSD, userToken must be JUSD (handled above)
+                // or a bridged token (handled in if-branch). JUICE maps to svJUSD but cannot
+                // be used as input (JuiceInputNotSupported), so this branch is never reached.
+                revert InvalidToken();
+            }
         } else if (actualToken != address(0)) {
             // Return excess tokens directly
-            IERC20(actualToken).transfer(to, excessAmount);
+            SafeERC20.safeTransfer(IERC20(actualToken), to, excessAmount);
         }
     }
 
@@ -664,6 +908,76 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     }
 
     /**
+     * @notice Adds a bridged stablecoin that can be converted to JUSD via its bridge
+     * @param token The bridged stablecoin address (e.g., USDC.e, USDT.e, ctUSD)
+     * @param bridge The StablecoinBridge contract for this token
+     */
+    function addBridgedToken(address token, address bridge) external onlyOwner {
+        if (token == address(0) || bridge == address(0)) revert InvalidBridgeConfig();
+        if (bridgedTokens.length >= MAX_BRIDGED_TOKENS) revert TooManyBridgedTokens();
+        if (bridgeConfigs[token].bridge != IStablecoinBridge(address(0))) {
+            revert BridgedTokenAlreadyExists(token);
+        }
+
+        // Validate bridge configuration matches expected tokens
+        IStablecoinBridge bridgeContract = IStablecoinBridge(bridge);
+        if (bridgeContract.usd() != token) revert InvalidBridgeConfig();
+        if (bridgeContract.JUSD() != address(JUSD)) revert InvalidBridgeConfig();
+
+        uint8 decimals = IERC20Metadata(token).decimals();
+        bridgeConfigs[token] = BridgeConfig({
+            bridge: IStablecoinBridge(bridge),
+            decimals: decimals
+        });
+        bridgedTokens.push(token);
+
+        // Approve bridged token to bridge for mint operations
+        IERC20(token).approve(bridge, type(uint256).max);
+        // Approve JUSD to bridge for burn operations
+        JUSD.approve(bridge, type(uint256).max);
+
+        emit BridgedTokenAdded(token, bridge, decimals);
+    }
+
+    /**
+     * @notice Removes a bridged stablecoin from the supported list
+     * @param token The bridged stablecoin address to remove
+     */
+    function removeBridgedToken(address token) external onlyOwner {
+        if (bridgeConfigs[token].bridge == IStablecoinBridge(address(0))) {
+            revert BridgedTokenNotFound(token);
+        }
+
+        address bridge = address(bridgeConfigs[token].bridge);
+
+        // Remove from mapping
+        delete bridgeConfigs[token];
+
+        // Remove from array (swap with last element and pop)
+        uint256 length = bridgedTokens.length;
+        for (uint256 i = 0; i < length; i++) {
+            if (bridgedTokens[i] == token) {
+                bridgedTokens[i] = bridgedTokens[length - 1];
+                bridgedTokens.pop();
+                break;
+            }
+        }
+
+        // Revoke approvals
+        IERC20(token).approve(bridge, 0);
+        JUSD.approve(bridge, 0);
+
+        emit BridgedTokenRemoved(token);
+    }
+
+    /**
+     * @notice Returns all supported bridged tokens
+     */
+    function getBridgedTokens() external view returns (address[] memory) {
+        return bridgedTokens;
+    }
+
+    /**
      * @notice Rescue function to withdraw accidentally sent native cBTC
      */
     function rescueNative() external onlyOwner {
@@ -680,7 +994,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
      */
     function rescueToken(address token, address to, uint256 amount) external onlyOwner {
         if (to == address(0)) revert InvalidToken();
-        IERC20(token).transfer(to, amount);
+        SafeERC20.safeTransfer(IERC20(token), to, amount);
         emit TokenRescued(token, to, amount);
     }
 
