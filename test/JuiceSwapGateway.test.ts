@@ -2750,6 +2750,55 @@ describe("JuiceSwapGateway", function () {
           )
         ).to.be.revertedWithCustomError(gateway, "TooManyBridgedTokens");
       });
+
+      it("Should revert with InvalidBridgeConfig when bridge.usd() != token", async function () {
+        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+
+        // Deploy a token and a bridge for a DIFFERENT token
+        const wrongToken = await MockERC20Factory.deploy("Wrong", "WRONG", 6);
+        const usdc = await MockERC20Factory.deploy("USD Coin", "USDC", 6);
+        const bridge = await MockBridgeFactory.deploy(
+          await usdc.getAddress(),  // Bridge expects USDC
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        // Try to add wrongToken with a bridge configured for USDC
+        await expect(
+          gateway.connect(owner).addBridgedToken(
+            await wrongToken.getAddress(),
+            await bridge.getAddress()
+          )
+        ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
+      });
+
+      it("Should revert with InvalidBridgeConfig when bridge.JUSD() != gateway JUSD", async function () {
+        const { gateway, owner } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+
+        // Deploy a bridge pointing to a different JUSD
+        const usdc = await MockERC20Factory.deploy("USD Coin", "USDC", 6);
+        const fakeJusd = await MockERC20Factory.deploy("Fake JUSD", "FJUSD", 18);
+        const bridge = await MockBridgeFactory.deploy(
+          await usdc.getAddress(),
+          await fakeJusd.getAddress(),  // Wrong JUSD
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        await expect(
+          gateway.connect(owner).addBridgedToken(
+            await usdc.getAddress(),
+            await bridge.getAddress()
+          )
+        ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
+      });
     });
 
     describe("Swap with Bridged Tokens", function () {

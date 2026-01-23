@@ -919,6 +919,11 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
             revert BridgedTokenAlreadyExists(token);
         }
 
+        // Validate bridge configuration matches expected tokens
+        IStablecoinBridge bridgeContract = IStablecoinBridge(bridge);
+        if (bridgeContract.usd() != token) revert InvalidBridgeConfig();
+        if (bridgeContract.JUSD() != address(JUSD)) revert InvalidBridgeConfig();
+
         uint8 decimals = IERC20Metadata(token).decimals();
         bridgeConfigs[token] = BridgeConfig({
             bridge: IStablecoinBridge(bridge),
