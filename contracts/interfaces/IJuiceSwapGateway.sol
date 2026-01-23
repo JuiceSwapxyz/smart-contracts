@@ -8,8 +8,18 @@ pragma solidity ^0.8.20;
  *      - JUSD ↔ svJUSD conversions (for interest-bearing liquidity)
  *      - JUICE ↔ JUSD conversions (via Equity contract)
  *      - cBTC ↔ WcBTC wrapping
+ *      - Bridged stablecoins ↔ JUSD conversions (via StablecoinBridge)
  */
 interface IJuiceSwapGateway {
+    /// @notice Status information for a bridged stablecoin's bridge
+    struct BridgeStatus {
+        bool canMint;           // Can deposit bridged token (mint JUSD)?
+        bool canBurn;           // Can withdraw to bridged token (burn JUSD)?
+        uint256 mintCapacity;   // Remaining JUSD that can be minted (in JUSD decimals)
+        uint256 burnCapacity;   // Available bridged token for burns (in bridged token decimals)
+        string mintBlockReason; // Reason why minting is blocked (empty if canMint)
+        string burnBlockReason; // Reason why burning is blocked (empty if canBurn)
+    }
     /**
      * @notice Emitted when a swap is executed through the gateway
      * @param user The address that initiated the swap
@@ -204,4 +214,61 @@ interface IJuiceSwapGateway {
      * @return juiceAmount The amount of JUICE received
      */
     function jusdToJuice(uint256 jusdAmount) external view returns (uint256 juiceAmount);
+
+    /**
+     * @notice Returns the equivalent amount of svJUSD for a given amount of bridged stablecoin
+     * @param bridgedToken The bridged stablecoin address (e.g., USDC.e, USDT.e, ctUSD)
+     * @param amount The amount of bridged stablecoin (in its native decimals)
+     * @return svJusdAmount The equivalent amount of svJUSD
+     */
+    function bridgedToSvJusd(address bridgedToken, uint256 amount) external view returns (uint256 svJusdAmount);
+
+    /**
+     * @notice Returns the equivalent amount of bridged stablecoin for a given amount of svJUSD
+     * @param bridgedToken The bridged stablecoin address (e.g., USDC.e, USDT.e, ctUSD)
+     * @param svJusdAmount The amount of svJUSD
+     * @return amount The equivalent amount of bridged stablecoin (in its native decimals)
+     */
+    function svJusdToBridged(address bridgedToken, uint256 svJusdAmount) external view returns (uint256 amount);
+
+    /**
+     * @notice Checks if a token is a supported bridged stablecoin
+     * @param token The token address to check
+     * @return True if the token is a supported bridged stablecoin
+     */
+    function isBridgedToken(address token) external view returns (bool);
+
+    /**
+     * @notice Returns all supported bridged tokens
+     * @return Array of bridged token addresses
+     */
+    function getBridgedTokens() external view returns (address[] memory);
+
+    /**
+     * @notice Adds a bridged stablecoin that can be converted to JUSD via its bridge
+     * @param token The bridged stablecoin address
+     * @param bridge The StablecoinBridge contract for this token
+     */
+    function addBridgedToken(address token, address bridge) external;
+
+    /**
+     * @notice Removes a bridged stablecoin from the supported list
+     * @param token The bridged stablecoin address to remove
+     */
+    function removeBridgedToken(address token) external;
+
+    /**
+     * @notice Returns comprehensive status information for a bridged token's bridge
+     * @dev Useful for frontends to check if operations will succeed before attempting them.
+     *      Checks include: bridge stopped, bridge expired, mint limit reached, burn liquidity.
+     * @param bridgedToken The bridged stablecoin address to check
+     * @return status The bridge status containing:
+     *         - canMint: Whether deposits (bridged → JUSD) are possible
+     *         - canBurn: Whether withdrawals (JUSD → bridged) are possible
+     *         - mintCapacity: Remaining JUSD mintable through this bridge
+     *         - burnCapacity: Available bridged tokens in bridge for withdrawals
+     *         - mintBlockReason: Human-readable reason if minting blocked
+     *         - burnBlockReason: Human-readable reason if burning blocked
+     */
+    function getBridgeStatus(address bridgedToken) external view returns (BridgeStatus memory status);
 }

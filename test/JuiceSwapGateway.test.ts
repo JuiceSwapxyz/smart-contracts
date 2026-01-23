@@ -9,6 +9,7 @@ import {
   MockWETH,
   MockSwapRouter,
   MockPositionManager,
+  MockStablecoinBridge,
 } from "../typechain-types";
 import { time, loadFixture } from "@nomicfoundation/hardhat-network-helpers";
 
@@ -2476,6 +2477,807 @@ describe("JuiceSwapGateway", function () {
           anyValue,
           tokenId  // Verify correct tokenId is emitted
         );
+    });
+  });
+
+  describe("Bridged Token Support", function () {
+    const BRIDGE_LIMIT = ethers.parseEther("100000000"); // 100M JUSD
+    const BRIDGE_WEEKS = 208; // 4 years
+
+    /**
+     * Deploy gateway with bridged token support (standalone fixture)
+     */
+    async function deployGatewayWithBridgedTokensFixture() {
+      const [owner, user1, user2, feeCollector] = await ethers.getSigners();
+
+      // Deploy core mocks
+      const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+      const jusd = (await MockERC20Factory.deploy("JuiceDollar", "JUSD", 18)) as unknown as MockERC20;
+
+      const MockEquityFactory = await ethers.getContractFactory("MockEquity");
+      const juice = (await MockEquityFactory.deploy("Juice Protocol", "JUICE", await jusd.getAddress())) as unknown as MockEquity;
+
+      const MockERC4626Factory = await ethers.getContractFactory("MockERC4626");
+      const svJusd = (await MockERC4626Factory.deploy(await jusd.getAddress(), "Savings Vault JUSD", "svJUSD")) as unknown as MockERC4626;
+
+      const MockWETHFactory = await ethers.getContractFactory("MockWETH");
+      const wcbtc = (await MockWETHFactory.deploy("Wrapped cBTC", "WcBTC")) as unknown as MockWETH;
+
+      const MockSwapRouterFactory = await ethers.getContractFactory("MockSwapRouter");
+      const swapRouter = (await MockSwapRouterFactory.deploy()) as unknown as MockSwapRouter;
+
+      const MockPositionManagerFactory = await ethers.getContractFactory("MockPositionManager");
+      const positionManager = (await MockPositionManagerFactory.deploy()) as unknown as MockPositionManager;
+
+      // Deploy gateway
+      const JuiceSwapGatewayFactory = await ethers.getContractFactory("JuiceSwapGateway");
+      const gateway = (await JuiceSwapGatewayFactory.deploy(
+        await jusd.getAddress(),
+        await svJusd.getAddress(),
+        await juice.getAddress(),
+        await wcbtc.getAddress(),
+        await swapRouter.getAddress(),
+        await positionManager.getAddress()
+      )) as unknown as JuiceSwapGateway;
+
+      // Setup balances
+      await jusd.mint(user1.address, INITIAL_BALANCE);
+      await jusd.mint(user2.address, INITIAL_BALANCE);
+      await juice.mint(user1.address, INITIAL_BALANCE);
+      await wcbtc.connect(user1).deposit({ value: ethers.parseEther("100") });
+      await wcbtc.connect(user2).deposit({ value: ethers.parseEther("100") });
+      await jusd.mint(await svJusd.getAddress(), ethers.parseEther("100000"));
+      await jusd.mint(await juice.getAddress(), ethers.parseEther("10000"));
+
+      // Deploy bridged stablecoins (6 decimals like USDT/USDC)
+      const usdc = (await MockERC20Factory.deploy("USD Coin", "USDC.e", 6)) as unknown as MockERC20;
+      const usdt = (await MockERC20Factory.deploy("Tether USD", "USDT.e", 6)) as unknown as MockERC20;
+      const ctUsd = (await MockERC20Factory.deploy("M0 USD", "ctUSD", 6)) as unknown as MockERC20;
+
+      // Deploy bridges
+      const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+      const usdcBridge = (await MockBridgeFactory.deploy(
+        await usdc.getAddress(),
+        await jusd.getAddress(),
+        BRIDGE_LIMIT,
+        BRIDGE_WEEKS
+      )) as unknown as MockStablecoinBridge;
+      const usdtBridge = (await MockBridgeFactory.deploy(
+        await usdt.getAddress(),
+        await jusd.getAddress(),
+        BRIDGE_LIMIT,
+        BRIDGE_WEEKS
+      )) as unknown as MockStablecoinBridge;
+      const ctUsdBridge = (await MockBridgeFactory.deploy(
+        await ctUsd.getAddress(),
+        await jusd.getAddress(),
+        BRIDGE_LIMIT,
+        BRIDGE_WEEKS
+      )) as unknown as MockStablecoinBridge;
+
+      // Fund bridges with bridged tokens (for burn operations)
+      const bridgeAmount = 10_000_000n * 10n ** 6n; // 10M with 6 decimals
+      await usdc.mint(await usdcBridge.getAddress(), bridgeAmount);
+      await usdt.mint(await usdtBridge.getAddress(), bridgeAmount);
+      await ctUsd.mint(await ctUsdBridge.getAddress(), bridgeAmount);
+
+      // Mint bridged tokens to users
+      const userAmount = 100_000n * 10n ** 6n; // 100k with 6 decimals
+      await usdc.mint(user1.address, userAmount);
+      await usdt.mint(user1.address, userAmount);
+      await ctUsd.mint(user1.address, userAmount);
+
+      // Add bridged tokens to gateway
+      await gateway.connect(owner).addBridgedToken(await usdc.getAddress(), await usdcBridge.getAddress());
+      await gateway.connect(owner).addBridgedToken(await usdt.getAddress(), await usdtBridge.getAddress());
+      await gateway.connect(owner).addBridgedToken(await ctUsd.getAddress(), await ctUsdBridge.getAddress());
+
+      return {
+        owner,
+        user1,
+        user2,
+        feeCollector,
+        jusd,
+        juice,
+        svJusd,
+        wcbtc,
+        swapRouter,
+        positionManager,
+        gateway,
+        usdc,
+        usdt,
+        ctUsd,
+        usdcBridge,
+        usdtBridge,
+        ctUsdBridge,
+      };
+    }
+
+    describe("Admin Functions", function () {
+      it("Should add bridged token", async function () {
+        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const newToken = await MockERC20Factory.deploy("New Token", "NEW", 6);
+
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+        const newBridge = await MockBridgeFactory.deploy(
+          await newToken.getAddress(),
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        await expect(
+          gateway.connect(owner).addBridgedToken(
+            await newToken.getAddress(),
+            await newBridge.getAddress()
+          )
+        ).to.emit(gateway, "BridgedTokenAdded")
+          .withArgs(await newToken.getAddress(), await newBridge.getAddress(), 6);
+
+        expect(await gateway.isBridgedToken(await newToken.getAddress())).to.be.true;
+      });
+
+      it("Should revert when adding duplicate bridged token", async function () {
+        const { gateway, owner, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        await expect(
+          gateway.connect(owner).addBridgedToken(
+            await usdc.getAddress(),
+            await usdcBridge.getAddress()
+          )
+        ).to.be.revertedWithCustomError(gateway, "BridgedTokenAlreadyExists");
+      });
+
+      it("Should revert when non-owner adds bridged token", async function () {
+        const { gateway, user1, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const newToken = await MockERC20Factory.deploy("New Token", "NEW", 6);
+
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+        const newBridge = await MockBridgeFactory.deploy(
+          await newToken.getAddress(),
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        await expect(
+          gateway.connect(user1).addBridgedToken(
+            await newToken.getAddress(),
+            await newBridge.getAddress()
+          )
+        ).to.be.revertedWithCustomError(gateway, "OwnableUnauthorizedAccount");
+      });
+
+      it("Should remove bridged token", async function () {
+        const { gateway, owner, usdc } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        await expect(
+          gateway.connect(owner).removeBridgedToken(await usdc.getAddress())
+        ).to.emit(gateway, "BridgedTokenRemoved")
+          .withArgs(await usdc.getAddress());
+
+        expect(await gateway.isBridgedToken(await usdc.getAddress())).to.be.false;
+      });
+
+      it("Should revoke both token and JUSD approvals when removing bridged token", async function () {
+        const { gateway, owner, usdc, usdt, usdcBridge, usdtBridge, jusd } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const gatewayAddress = await gateway.getAddress();
+        const usdcBridgeAddress = await usdcBridge.getAddress();
+        const usdtBridgeAddress = await usdtBridge.getAddress();
+
+        // Verify both bridges have unlimited JUSD approval before removal
+        expect(await jusd.allowance(gatewayAddress, usdcBridgeAddress)).to.equal(ethers.MaxUint256);
+        expect(await jusd.allowance(gatewayAddress, usdtBridgeAddress)).to.equal(ethers.MaxUint256);
+
+        // Remove USDC bridge
+        await gateway.connect(owner).removeBridgedToken(await usdc.getAddress());
+
+        // Verify USDC bridge approvals are revoked
+        expect(await usdc.allowance(gatewayAddress, usdcBridgeAddress)).to.equal(0);
+        expect(await jusd.allowance(gatewayAddress, usdcBridgeAddress)).to.equal(0);
+
+        // Verify USDT bridge approvals remain unaffected
+        expect(await jusd.allowance(gatewayAddress, usdtBridgeAddress)).to.equal(ethers.MaxUint256);
+      });
+
+      it("Should revert when removing non-existent bridged token", async function () {
+        const { gateway, owner } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const randomAddress = ethers.Wallet.createRandom().address;
+        await expect(
+          gateway.connect(owner).removeBridgedToken(randomAddress)
+        ).to.be.revertedWithCustomError(gateway, "BridgedTokenNotFound");
+      });
+
+      it("Should return all bridged tokens", async function () {
+        const { gateway, usdc, usdt, ctUsd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const tokens = await gateway.getBridgedTokens();
+        expect(tokens.length).to.equal(3);
+        expect(tokens).to.include(await usdc.getAddress());
+        expect(tokens).to.include(await usdt.getAddress());
+        expect(tokens).to.include(await ctUsd.getAddress());
+      });
+
+      it("Should revert with InvalidBridgeConfig for zero addresses", async function () {
+        const { gateway, owner } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        await expect(
+          gateway.connect(owner).addBridgedToken(ethers.ZeroAddress, ethers.ZeroAddress)
+        ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
+      });
+
+      it("Should revert with TooManyBridgedTokens when limit exceeded", async function () {
+        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+
+        // Already have 3 tokens, add 7 more to reach limit of 10
+        for (let i = 0; i < 7; i++) {
+          const token = await MockERC20Factory.deploy(`Token${i}`, `TKN${i}`, 6);
+          const bridge = await MockBridgeFactory.deploy(
+            await token.getAddress(),
+            await jusd.getAddress(),
+            BRIDGE_LIMIT,
+            BRIDGE_WEEKS
+          );
+          await gateway.connect(owner).addBridgedToken(
+            await token.getAddress(),
+            await bridge.getAddress()
+          );
+        }
+
+        // 11th token should fail
+        const extraToken = await MockERC20Factory.deploy("Extra", "EXTRA", 6);
+        const extraBridge = await MockBridgeFactory.deploy(
+          await extraToken.getAddress(),
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        await expect(
+          gateway.connect(owner).addBridgedToken(
+            await extraToken.getAddress(),
+            await extraBridge.getAddress()
+          )
+        ).to.be.revertedWithCustomError(gateway, "TooManyBridgedTokens");
+      });
+
+      it("Should revert with InvalidBridgeConfig when bridge.usd() != token", async function () {
+        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+
+        // Deploy a token and a bridge for a DIFFERENT token
+        const wrongToken = await MockERC20Factory.deploy("Wrong", "WRONG", 6);
+        const usdc = await MockERC20Factory.deploy("USD Coin", "USDC", 6);
+        const bridge = await MockBridgeFactory.deploy(
+          await usdc.getAddress(),  // Bridge expects USDC
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        // Try to add wrongToken with a bridge configured for USDC
+        await expect(
+          gateway.connect(owner).addBridgedToken(
+            await wrongToken.getAddress(),
+            await bridge.getAddress()
+          )
+        ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
+      });
+
+      it("Should revert with InvalidBridgeConfig when bridge.JUSD() != gateway JUSD", async function () {
+        const { gateway, owner } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+
+        // Deploy a bridge pointing to a different JUSD
+        const usdc = await MockERC20Factory.deploy("USD Coin", "USDC", 6);
+        const fakeJusd = await MockERC20Factory.deploy("Fake JUSD", "FJUSD", 18);
+        const bridge = await MockBridgeFactory.deploy(
+          await usdc.getAddress(),
+          await fakeJusd.getAddress(),  // Wrong JUSD
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        await expect(
+          gateway.connect(owner).addBridgedToken(
+            await usdc.getAddress(),
+            await bridge.getAddress()
+          )
+        ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
+      });
+    });
+
+    describe("Swap with Bridged Tokens", function () {
+      it("Should swap bridged token (USDC.e) to WcBTC", async function () {
+        const { gateway, user1, usdc, wcbtc, swapRouter } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const swapAmount = 1000n * 10n ** 6n; // 1000 USDC (6 decimals)
+        const expectedOutput = ethers.parseEther("0.01"); // 0.01 WcBTC
+
+        await swapRouter.setSwapOutput(expectedOutput);
+        await usdc.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+        const wcbtcBefore = await wcbtc.balanceOf(user1.address);
+
+        await gateway.connect(user1).swapExactTokensForTokens(
+          await usdc.getAddress(),
+          await wcbtc.getAddress(),
+          0, // use default fee
+          swapAmount,
+          0,
+          user1.address,
+          deadline
+        );
+
+        const wcbtcAfter = await wcbtc.balanceOf(user1.address);
+        expect(wcbtcAfter - wcbtcBefore).to.equal(expectedOutput);
+      });
+
+      it("Should swap WcBTC to bridged token (USDT.e)", async function () {
+        const { gateway, user1, usdt, wcbtc, svJusd, swapRouter, usdtBridge } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const swapAmount = ethers.parseEther("0.01"); // 0.01 WcBTC
+        const svJusdOutput = ethers.parseEther("1000"); // Mock router returns this
+
+        await swapRouter.setSwapOutput(svJusdOutput);
+        await wcbtc.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+        // Track bridge minted amount for the burn
+        await usdtBridge.setMinted(svJusdOutput);
+
+        const usdtBefore = await usdt.balanceOf(user1.address);
+
+        await gateway.connect(user1).swapExactTokensForTokens(
+          await wcbtc.getAddress(),
+          await usdt.getAddress(),
+          0,
+          swapAmount,
+          0,
+          user1.address,
+          deadline
+        );
+
+        const usdtAfter = await usdt.balanceOf(user1.address);
+        // 1000 JUSD (18 decimals) = 1000 USDT (6 decimals)
+        expect(usdtAfter - usdtBefore).to.equal(1000n * 10n ** 6n);
+      });
+
+      it("Should emit SwapExecuted event with bridged token addresses", async function () {
+        const { gateway, user1, usdc, wcbtc, swapRouter } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const swapAmount = 1000n * 10n ** 6n;
+
+        await swapRouter.setSwapOutput(ethers.parseEther("0.01"));
+        await usdc.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+        await expect(
+          gateway.connect(user1).swapExactTokensForTokens(
+            await usdc.getAddress(),
+            await wcbtc.getAddress(),
+            0,
+            swapAmount,
+            0,
+            user1.address,
+            deadline
+          )
+        ).to.emit(gateway, "SwapExecuted")
+          .withArgs(user1.address, await usdc.getAddress(), await wcbtc.getAddress(), anyValue, anyValue);
+      });
+    });
+
+    describe("Add Liquidity with Bridged Tokens", function () {
+      it("Should add liquidity with bridged token (USDC.e) + WcBTC", async function () {
+        const { gateway, user1, usdc, wcbtc, svJusd, positionManager } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const usdcAmount = 1000n * 10n ** 6n; // 1000 USDC (6 decimals)
+        const wcbtcAmount = ethers.parseEther("0.01");
+
+        // Calculate expected svJUSD shares (1000 USDC = 1000 JUSD = ~1000 svJUSD shares)
+        const jusdEquivalent = ethers.parseEther("1000"); // 1000 USDC = 1000 JUSD
+        const svJusdShares = await svJusd.convertToShares(jusdEquivalent);
+
+        const svJusdAddr = await svJusd.getAddress();
+        const wcbtcAddr = await wcbtc.getAddress();
+        const [amount0, amount1] = svJusdAddr < wcbtcAddr
+          ? [svJusdShares, wcbtcAmount]
+          : [wcbtcAmount, svJusdShares];
+
+        await positionManager.setMintResult(1, 100, amount0, amount1);
+
+        await usdc.connect(user1).approve(await gateway.getAddress(), usdcAmount);
+        await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
+
+        const tx = await gateway.connect(user1).addLiquidity(
+          await usdc.getAddress(),
+          await wcbtc.getAddress(),
+          0, // default fee
+          usdcAmount,
+          wcbtcAmount,
+          0,
+          0,
+          user1.address,
+          deadline
+        );
+
+        await expect(tx)
+          .to.emit(gateway, "LiquidityAdded")
+          .withArgs(user1.address, await usdc.getAddress(), await wcbtc.getAddress(), anyValue, anyValue, 1);
+      });
+
+      it("Should revert with InvalidTokenPair for bridged token + JUSD", async function () {
+        const { gateway, user1, usdc, jusd } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const amount = 1000n * 10n ** 6n;
+
+        await usdc.connect(user1).approve(await gateway.getAddress(), amount);
+        await jusd.connect(user1).approve(await gateway.getAddress(), ethers.parseEther("1000"));
+
+        await expect(
+          gateway.connect(user1).addLiquidity(
+            await usdc.getAddress(),
+            await jusd.getAddress(),
+            0,
+            amount,
+            ethers.parseEther("1000"),
+            0,
+            0,
+            user1.address,
+            deadline
+          )
+        ).to.be.revertedWithCustomError(gateway, "InvalidTokenPair");
+      });
+
+      it("Should revert with InvalidTokenPair for two bridged tokens", async function () {
+        const { gateway, user1, usdc, usdt } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const amount = 1000n * 10n ** 6n;
+
+        await usdc.connect(user1).approve(await gateway.getAddress(), amount);
+        await usdt.connect(user1).approve(await gateway.getAddress(), amount);
+
+        await expect(
+          gateway.connect(user1).addLiquidity(
+            await usdc.getAddress(),
+            await usdt.getAddress(),
+            0,
+            amount,
+            amount,
+            0,
+            0,
+            user1.address,
+            deadline
+          )
+        ).to.be.revertedWithCustomError(gateway, "InvalidTokenPair");
+      });
+    });
+
+    describe("View Functions", function () {
+      it("Should convert bridged token amount to svJUSD", async function () {
+        const { gateway, usdc, svJusd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const usdcAmount = 1000n * 10n ** 6n; // 1000 USDC (6 decimals)
+        const jusdEquivalent = ethers.parseEther("1000"); // 1000 JUSD (18 decimals)
+        const expectedSvJusd = await svJusd.convertToShares(jusdEquivalent);
+
+        const result = await gateway.bridgedToSvJusd(await usdc.getAddress(), usdcAmount);
+        expect(result).to.equal(expectedSvJusd);
+      });
+
+      it("Should convert svJUSD amount to bridged token", async function () {
+        const { gateway, usdc, svJusd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const svJusdAmount = ethers.parseEther("1000");
+        const jusdEquivalent = await svJusd.convertToAssets(svJusdAmount);
+        // 1000 JUSD (18 decimals) = 1000 USDC (6 decimals)
+        const expectedUsdc = 1000n * 10n ** 6n;
+
+        const result = await gateway.svJusdToBridged(await usdc.getAddress(), svJusdAmount);
+        expect(result).to.equal(expectedUsdc);
+      });
+
+      it("Should return true for supported bridged token", async function () {
+        const { gateway, usdc } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+        expect(await gateway.isBridgedToken(await usdc.getAddress())).to.be.true;
+      });
+
+      it("Should return false for non-bridged token", async function () {
+        const { gateway, wcbtc } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+        expect(await gateway.isBridgedToken(await wcbtc.getAddress())).to.be.false;
+      });
+
+      it("Should revert bridgedToSvJusd for non-bridged token", async function () {
+        const { gateway, wcbtc } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        await expect(
+          gateway.bridgedToSvJusd(await wcbtc.getAddress(), 1000)
+        ).to.be.revertedWithCustomError(gateway, "BridgedTokenNotFound");
+      });
+
+      it("Should revert svJusdToBridged for non-bridged token", async function () {
+        const { gateway, wcbtc } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        await expect(
+          gateway.svJusdToBridged(await wcbtc.getAddress(), ethers.parseEther("1000"))
+        ).to.be.revertedWithCustomError(gateway, "BridgedTokenNotFound");
+      });
+    });
+
+    describe("Decimal Conversion", function () {
+      it("Should correctly convert 6 decimal token to 18 decimal JUSD", async function () {
+        const { gateway, usdc, svJusd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // 1 USDC (6 decimals) = 1 JUSD (18 decimals)
+        const usdcAmount = 1n * 10n ** 6n; // 1 USDC
+        const expectedJusdEquivalent = ethers.parseEther("1"); // 1 JUSD
+        const expectedSvJusd = await svJusd.convertToShares(expectedJusdEquivalent);
+
+        const result = await gateway.bridgedToSvJusd(await usdc.getAddress(), usdcAmount);
+        expect(result).to.equal(expectedSvJusd);
+      });
+
+      it("Should correctly convert 18 decimal JUSD to 6 decimal token", async function () {
+        const { gateway, usdc, svJusd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // 1 JUSD (18 decimals) = 1 USDC (6 decimals)
+        const svJusdAmount = await svJusd.convertToShares(ethers.parseEther("1"));
+        const expectedUsdc = 1n * 10n ** 6n; // 1 USDC
+
+        const result = await gateway.svJusdToBridged(await usdc.getAddress(), svJusdAmount);
+        expect(result).to.equal(expectedUsdc);
+      });
+
+      it("Should handle large amounts correctly", async function () {
+        const { gateway, usdc, svJusd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // 1,000,000 USDC
+        const usdcAmount = 1_000_000n * 10n ** 6n;
+        const expectedJusdEquivalent = ethers.parseEther("1000000");
+        const expectedSvJusd = await svJusd.convertToShares(expectedJusdEquivalent);
+
+        const result = await gateway.bridgedToSvJusd(await usdc.getAddress(), usdcAmount);
+        expect(result).to.equal(expectedSvJusd);
+      });
+
+      it("Should handle small amounts with precision loss", async function () {
+        const { gateway, usdc, svJusd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Very small amount: 1 wei of svJUSD converted to USDC
+        // This tests that precision loss is handled (rounds down to 0)
+        const svJusdAmount = 1n; // 1 wei
+        const result = await gateway.svJusdToBridged(await usdc.getAddress(), svJusdAmount);
+        // 1 wei JUSD = 0 USDC (too small)
+        expect(result).to.equal(0n);
+      });
+    });
+
+    describe("Multiple Bridged Tokens", function () {
+      it("Should support swapping between different bridged tokens via pool", async function () {
+        const { gateway, user1, usdc, usdt, svJusd, swapRouter, usdtBridge } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const swapAmount = 1000n * 10n ** 6n; // 1000 USDC
+
+        // Mock: USDC → svJUSD → USDT path
+        // Router returns svJUSD, then gateway converts to USDT
+        const svJusdOutput = ethers.parseEther("1000");
+        await swapRouter.setSwapOutput(svJusdOutput);
+        await usdtBridge.setMinted(svJusdOutput);
+
+        await usdc.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+        const usdtBefore = await usdt.balanceOf(user1.address);
+
+        await gateway.connect(user1).swapExactTokensForTokens(
+          await usdc.getAddress(),
+          await usdt.getAddress(),
+          0,
+          swapAmount,
+          0,
+          user1.address,
+          deadline
+        );
+
+        const usdtAfter = await usdt.balanceOf(user1.address);
+        expect(usdtAfter - usdtBefore).to.equal(1000n * 10n ** 6n);
+      });
+
+      it("Should handle all three bridged tokens independently", async function () {
+        const { gateway, usdc, usdt, ctUsd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // All three should be recognized as bridged tokens
+        expect(await gateway.isBridgedToken(await usdc.getAddress())).to.be.true;
+        expect(await gateway.isBridgedToken(await usdt.getAddress())).to.be.true;
+        expect(await gateway.isBridgedToken(await ctUsd.getAddress())).to.be.true;
+
+        // Each should have correct bridge config
+        const tokens = await gateway.getBridgedTokens();
+        expect(tokens.length).to.equal(3);
+      });
+    });
+
+    describe("getBridgeStatus", function () {
+      const bridgeAmount = 10_000_000n * 10n ** 6n; // 10M with 6 decimals (from fixture)
+
+      it("Should return healthy status for properly configured bridge", async function () {
+        const { gateway, usdc } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const status = await gateway.getBridgeStatus(await usdc.getAddress());
+
+        expect(status.canMint).to.be.true;
+        expect(status.canBurn).to.be.true;
+        expect(status.mintCapacity).to.equal(BRIDGE_LIMIT);
+        expect(status.burnCapacity).to.equal(bridgeAmount);
+        expect(status.mintBlockReason).to.equal("");
+        expect(status.burnBlockReason).to.equal("");
+      });
+
+      it("Should return unsupported status for unknown token", async function () {
+        const { gateway } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Use a random address that's not a bridged token
+        const randomAddress = ethers.Wallet.createRandom().address;
+        const status = await gateway.getBridgeStatus(randomAddress);
+
+        expect(status.canMint).to.be.false;
+        expect(status.canBurn).to.be.false;
+        expect(status.mintCapacity).to.equal(0);
+        expect(status.burnCapacity).to.equal(0);
+        expect(status.mintBlockReason).to.equal("Token not supported");
+        expect(status.burnBlockReason).to.equal("Token not supported");
+      });
+
+      it("Should return stopped status when bridge is stopped", async function () {
+        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Stop the bridge
+        await usdcBridge.setStopped(true);
+
+        const status = await gateway.getBridgeStatus(await usdc.getAddress());
+
+        expect(status.canMint).to.be.false;
+        expect(status.canBurn).to.be.true; // Burn should still work
+        expect(status.mintCapacity).to.equal(0);
+        expect(status.burnCapacity).to.equal(bridgeAmount); // Bridge still has liquidity
+        expect(status.mintBlockReason).to.equal("Bridge stopped");
+        expect(status.burnBlockReason).to.equal("");
+      });
+
+      it("Should return expired status when bridge horizon is passed", async function () {
+        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Get the bridge horizon and advance time past it
+        const horizon = await usdcBridge.horizon();
+        await time.increaseTo(horizon + 1n);
+
+        const status = await gateway.getBridgeStatus(await usdc.getAddress());
+
+        expect(status.canMint).to.be.false;
+        expect(status.canBurn).to.be.true; // Burn should still work
+        expect(status.mintCapacity).to.equal(0);
+        expect(status.burnCapacity).to.equal(bridgeAmount);
+        expect(status.mintBlockReason).to.equal("Bridge expired");
+        expect(status.burnBlockReason).to.equal("");
+      });
+
+      it("Should return limit reached when mint limit is exhausted", async function () {
+        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Set minted to the limit
+        await usdcBridge.setMinted(BRIDGE_LIMIT);
+
+        const status = await gateway.getBridgeStatus(await usdc.getAddress());
+
+        expect(status.canMint).to.be.false;
+        expect(status.canBurn).to.be.true; // Burn should still work
+        expect(status.mintCapacity).to.equal(0);
+        expect(status.burnCapacity).to.equal(bridgeAmount);
+        expect(status.mintBlockReason).to.equal("Limit reached");
+        expect(status.burnBlockReason).to.equal("");
+      });
+
+      it("Should return insufficient liquidity when bridge has no tokens", async function () {
+        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        // Deploy a new bridged token with empty bridge
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const newToken = await MockERC20Factory.deploy("New Token", "NEW", 6);
+
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+        const newBridge = await MockBridgeFactory.deploy(
+          await newToken.getAddress(),
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        // Add to gateway but don't fund the bridge
+        await gateway.connect(owner).addBridgedToken(await newToken.getAddress(), await newBridge.getAddress());
+
+        const status = await gateway.getBridgeStatus(await newToken.getAddress());
+
+        expect(status.canMint).to.be.true; // Can still mint
+        expect(status.canBurn).to.be.false; // Can't burn without liquidity
+        expect(status.mintCapacity).to.equal(BRIDGE_LIMIT);
+        expect(status.burnCapacity).to.equal(0);
+        expect(status.mintBlockReason).to.equal("");
+        expect(status.burnBlockReason).to.equal("Insufficient bridge liquidity");
+      });
+
+      it("Should return accurate remaining mint capacity", async function () {
+        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Set minted to 40% of limit
+        const mintedAmount = BRIDGE_LIMIT * 40n / 100n;
+        await usdcBridge.setMinted(mintedAmount);
+
+        const status = await gateway.getBridgeStatus(await usdc.getAddress());
+
+        expect(status.canMint).to.be.true;
+        expect(status.canBurn).to.be.true;
+        expect(status.mintCapacity).to.equal(BRIDGE_LIMIT - mintedAmount);
+        expect(status.burnCapacity).to.equal(bridgeAmount);
+        expect(status.mintBlockReason).to.equal("");
+        expect(status.burnBlockReason).to.equal("");
+      });
+
+      it("Should handle combined failure: stopped bridge with no liquidity", async function () {
+        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        // Deploy a new bridged token with empty bridge
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const newToken = await MockERC20Factory.deploy("New Token", "NEW", 6);
+
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+        const newBridge = await MockBridgeFactory.deploy(
+          await newToken.getAddress(),
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        // Add to gateway but don't fund the bridge
+        await gateway.connect(owner).addBridgedToken(await newToken.getAddress(), await newBridge.getAddress());
+
+        // Stop the bridge
+        await newBridge.setStopped(true);
+
+        const status = await gateway.getBridgeStatus(await newToken.getAddress());
+
+        // Both mint and burn should be blocked for different reasons
+        expect(status.canMint).to.be.false;
+        expect(status.canBurn).to.be.false;
+        expect(status.mintCapacity).to.equal(0);
+        expect(status.burnCapacity).to.equal(0);
+        expect(status.mintBlockReason).to.equal("Bridge stopped");
+        expect(status.burnBlockReason).to.equal("Insufficient bridge liquidity");
+      });
     });
   });
 });
