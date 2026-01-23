@@ -960,7 +960,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
 
         // Revoke approvals
         IERC20(token).approve(bridge, 0);
-        // Note: We don't revoke JUSD approval as other bridges may still need it
+        JUSD.approve(bridge, 0);
 
         emit BridgedTokenRemoved(token);
     }

@@ -2663,6 +2663,29 @@ describe("JuiceSwapGateway", function () {
         expect(await gateway.isBridgedToken(await usdc.getAddress())).to.be.false;
       });
 
+      it("Should revoke both token and JUSD approvals when removing bridged token", async function () {
+        const { gateway, owner, usdc, usdt, usdcBridge, usdtBridge, jusd } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const gatewayAddress = await gateway.getAddress();
+        const usdcBridgeAddress = await usdcBridge.getAddress();
+        const usdtBridgeAddress = await usdtBridge.getAddress();
+
+        // Verify both bridges have unlimited JUSD approval before removal
+        expect(await jusd.allowance(gatewayAddress, usdcBridgeAddress)).to.equal(ethers.MaxUint256);
+        expect(await jusd.allowance(gatewayAddress, usdtBridgeAddress)).to.equal(ethers.MaxUint256);
+
+        // Remove USDC bridge
+        await gateway.connect(owner).removeBridgedToken(await usdc.getAddress());
+
+        // Verify USDC bridge approvals are revoked
+        expect(await usdc.allowance(gatewayAddress, usdcBridgeAddress)).to.equal(0);
+        expect(await jusd.allowance(gatewayAddress, usdcBridgeAddress)).to.equal(0);
+
+        // Verify USDT bridge approvals remain unaffected
+        expect(await jusd.allowance(gatewayAddress, usdtBridgeAddress)).to.equal(ethers.MaxUint256);
+      });
+
       it("Should revert when removing non-existent bridged token", async function () {
         const { gateway, owner } = await loadFixture(deployGatewayWithBalancesFixture);
 
