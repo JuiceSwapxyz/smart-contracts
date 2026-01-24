@@ -34,11 +34,6 @@ interface IStablecoinBridge {
     function burnAndSend(address target, uint256 amount) external;
 
     /**
-     * @notice Check if the bridge has been permanently stopped
-     */
-    function stopped() external view returns (bool);
-
-    /**
      * @notice The expiration timestamp after which minting is disabled
      */
     function horizon() external view returns (uint256);
@@ -62,4 +57,9 @@ interface IStablecoinBridge {
      * @notice The JUSD token
      */
     function JUSD() external view returns (address);
+
+    /**
+     * @notice Check if the bridge has been permanently stopped
+     */
+    function stopped() external view returns (bool);
 }
