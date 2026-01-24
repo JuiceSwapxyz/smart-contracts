@@ -103,6 +103,26 @@ interface IJuiceSwapGateway {
     );
 
     /**
+     * @notice Emitted when a new pool is created through the gateway
+     * @param creator The address that created the pool
+     * @param tokenA First user-facing token address
+     * @param tokenB Second user-facing token address
+     * @param actualToken0 Actual pool token0 (e.g., svJUSD instead of JUSD)
+     * @param actualToken1 Actual pool token1
+     * @param fee The pool fee tier
+     * @param pool The address of the created pool
+     */
+    event PoolCreated(
+        address indexed creator,
+        address indexed tokenA,
+        address indexed tokenB,
+        address actualToken0,
+        address actualToken1,
+        uint24 fee,
+        address pool
+    );
+
+    /**
      * @notice Swaps an exact amount of input tokens for as many output tokens as possible
      * @param tokenIn The address of the input token (use address(0) for native cBTC)
      * @param tokenOut The address of the output token (use address(0) for native cBTC)
@@ -285,4 +305,68 @@ interface IJuiceSwapGateway {
      *         - burnBlockReason: Human-readable reason if burning blocked
      */
     function getBridgeStatus(address bridgedToken) external view returns (BridgeStatus memory status);
+
+    /**
+     * @notice Creates and initializes a new pool if it doesn't exist
+     * @dev Converts user-facing tokens to actual pool tokens (e.g., JUSD -> svJUSD)
+     *      and adjusts the price accordingly based on svJUSD share price.
+     * @param tokenA First user-facing token address (use address(0) for native cBTC)
+     * @param tokenB Second user-facing token address
+     * @param fee The pool fee tier (100, 500, 3000, or 10000). Use 0 for default (3000).
+     * @param sqrtPriceX96 Initial sqrt price in user-token terms (will be converted for actual tokens)
+     * @return pool The address of the created (or existing) pool
+     */
+    function createPool(
+        address tokenA,
+        address tokenB,
+        uint24 fee,
+        uint160 sqrtPriceX96
+    ) external returns (address pool);
+
+    /**
+     * @notice Creates a pool and adds initial liquidity in a single transaction
+     * @dev Combines createPool() and addLiquidity() for gas efficiency.
+     *      If pool already exists, only adds liquidity (sqrtPriceX96 is ignored).
+     * @param tokenA First user-facing token address (use address(0) for native cBTC)
+     * @param tokenB Second user-facing token address
+     * @param fee The pool fee tier. Use 0 for default (3000).
+     * @param sqrtPriceX96 Initial sqrt price in user-token terms (ignored if pool exists)
+     * @param tickLower Lower tick bound (use tickLower == tickUpper for full range)
+     * @param tickUpper Upper tick bound
+     * @param amountADesired Desired amount of tokenA
+     * @param amountBDesired Desired amount of tokenB
+     * @param amountAMin Minimum amount of tokenA (slippage protection)
+     * @param amountBMin Minimum amount of tokenB (slippage protection)
+     * @param to Recipient of the LP NFT
+     * @param deadline Transaction deadline
+     * @return pool The pool address
+     * @return amountA Actual amount of tokenA used
+     * @return amountB Actual amount of tokenB used
+     * @return liquidity The NFT token ID
+     */
+    function createPoolAndAddLiquidity(
+        address tokenA,
+        address tokenB,
+        uint24 fee,
+        uint160 sqrtPriceX96,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        address to,
+        uint256 deadline
+    ) external payable returns (address pool, uint256 amountA, uint256 amountB, uint256 liquidity);
+
+    /**
+     * @notice View function to check if a pool exists for a token pair
+     * @dev Converts user tokens to actual pool tokens before checking
+     * @param tokenA First user-facing token address (use address(0) for native cBTC)
+     * @param tokenB Second user-facing token address
+     * @param fee The pool fee tier. Use 0 for default (3000).
+     * @return pool The pool address (address(0) if doesn't exist)
+     * @return exists True if pool exists
+     */
+    function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool, bool exists);
 }

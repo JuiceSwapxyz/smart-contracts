@@ -2912,9 +2912,8 @@ describe("JuiceSwapGateway", function () {
         await jusd.setMinter(await newBridge.getAddress(), true);
 
         // Anyone can register (permissionless)
-        await expect(
-          gateway.connect(user1).registerBridgedToken(await newBridge.getAddress())
-        ).to.emit(gateway, "BridgedTokenRegistered")
+        await expect(gateway.connect(user1).registerBridgedToken(await newBridge.getAddress()))
+          .to.emit(gateway, "BridgedTokenRegistered")
           .withArgs(await newToken.getAddress(), await newBridge.getAddress(), user1.address, 6);
 
         expect(await gateway.isBridgedToken(await newToken.getAddress())).to.be.true;
@@ -2943,9 +2942,10 @@ describe("JuiceSwapGateway", function () {
       it("Should revert when registering duplicate bridged token", async function () {
         const { gateway, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
 
-        await expect(
-          gateway.registerBridgedToken(await usdcBridge.getAddress())
-        ).to.be.revertedWithCustomError(gateway, "BridgedTokenAlreadyExists");
+        await expect(gateway.registerBridgedToken(await usdcBridge.getAddress())).to.be.revertedWithCustomError(
+          gateway,
+          "BridgedTokenAlreadyExists"
+        );
       });
 
       it("Should return all bridged tokens", async function () {
@@ -2961,9 +2961,10 @@ describe("JuiceSwapGateway", function () {
       it("Should revert with InvalidBridgeConfig for zero address", async function () {
         const { gateway } = await loadFixture(deployGatewayWithBalancesFixture);
 
-        await expect(
-          gateway.registerBridgedToken(ethers.ZeroAddress)
-        ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
+        await expect(gateway.registerBridgedToken(ethers.ZeroAddress)).to.be.revertedWithCustomError(
+          gateway,
+          "InvalidBridgeConfig"
+        );
       });
 
       it("Should revert with InvalidBridgeConfig when bridge.JUSD() != gateway JUSD", async function () {
@@ -2984,9 +2985,10 @@ describe("JuiceSwapGateway", function () {
         // Note: Even if we set minter, JUSD mismatch is checked first
         await jusd.setMinter(await bridge.getAddress(), true);
 
-        await expect(
-          gateway.registerBridgedToken(await bridge.getAddress())
-        ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
+        await expect(gateway.registerBridgedToken(await bridge.getAddress())).to.be.revertedWithCustomError(
+          gateway,
+          "InvalidBridgeConfig"
+        );
       });
     });
 
@@ -3812,6 +3814,327 @@ describe("JuiceSwapGateway", function () {
 
         // Verify swap router was called (not direct path)
         // The exact assertion depends on mock implementation
+      });
+    });
+  });
+
+  // ==================== Pool Creation Tests ====================
+
+  describe("Pool Creation", function () {
+    describe("getPool", function () {
+      it("Should return pool address when pool exists", async function () {
+        const { gateway, jusd, wcbtc, positionManager, svJusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const svJusdAddr = await svJusd.getAddress();
+        const wcbtcAddr = await wcbtc.getAddress();
+        const mockPoolAddr = "0x0000000000000000000000000000000000001234";
+
+        // Get the factory from the position manager (Gateway uses POSITION_MANAGER.factory())
+        const factoryAddr = await positionManager.factory();
+        const MockFactoryFactory = await ethers.getContractFactory("MockFactory");
+        const factory = MockFactoryFactory.attach(factoryAddr);
+
+        // Set pool in mock factory
+        await factory.setPool(svJusdAddr, wcbtcAddr, 3000, mockPoolAddr);
+
+        const [pool, exists] = await gateway.getPool(await jusd.getAddress(), await wcbtc.getAddress(), 3000);
+
+        expect(exists).to.be.true;
+        expect(pool).to.equal(mockPoolAddr);
+      });
+
+      it("Should return (address(0), false) when pool does not exist", async function () {
+        const { gateway, jusd, wcbtc } = await loadFixture(deployGatewayFixture);
+
+        const [pool, exists] = await gateway.getPool(await jusd.getAddress(), await wcbtc.getAddress(), 3000);
+
+        expect(exists).to.be.false;
+        expect(pool).to.equal(ethers.ZeroAddress);
+      });
+
+      it("Should use default fee when fee is 0", async function () {
+        const { gateway, jusd, wcbtc, positionManager, svJusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const svJusdAddr = await svJusd.getAddress();
+        const wcbtcAddr = await wcbtc.getAddress();
+        const mockPoolAddr = "0x0000000000000000000000000000000000005678";
+
+        // Get the factory from the position manager
+        const factoryAddr = await positionManager.factory();
+        const MockFactoryFactory = await ethers.getContractFactory("MockFactory");
+        const factory = MockFactoryFactory.attach(factoryAddr);
+
+        // Set pool with default fee (3000)
+        await factory.setPool(svJusdAddr, wcbtcAddr, 3000, mockPoolAddr);
+
+        // Query with fee=0 should use default (3000)
+        const [pool, exists] = await gateway.getPool(await jusd.getAddress(), await wcbtc.getAddress(), 0);
+
+        expect(exists).to.be.true;
+        expect(pool).to.equal(mockPoolAddr);
+      });
+
+      it("Should correctly map JUSD to svJUSD for pool lookup", async function () {
+        const { gateway, jusd, wcbtc, positionManager, svJusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const svJusdAddr = await svJusd.getAddress();
+        const wcbtcAddr = await wcbtc.getAddress();
+        const mockPoolAddr = "0x0000000000000000000000000000000000009abc";
+
+        // Get the factory from the position manager
+        const factoryAddr = await positionManager.factory();
+        const MockFactoryFactory = await ethers.getContractFactory("MockFactory");
+        const factory = MockFactoryFactory.attach(factoryAddr);
+
+        // Set pool with svJUSD (not JUSD)
+        await factory.setPool(svJusdAddr, wcbtcAddr, 3000, mockPoolAddr);
+
+        // Query with JUSD should find the svJUSD pool
+        const [pool, exists] = await gateway.getPool(await jusd.getAddress(), await wcbtc.getAddress(), 3000);
+
+        expect(exists).to.be.true;
+        expect(pool.toLowerCase()).to.equal(mockPoolAddr.toLowerCase());
+      });
+    });
+
+    describe("createPool", function () {
+      it("Should create a new pool with JUSD/WcBTC", async function () {
+        const { gateway, user1, jusd, wcbtc, svJusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        // Initial sqrt price: 1:1 ratio
+        const sqrtPriceX96 = BigInt("79228162514264337593543950336"); // sqrt(1) * 2^96
+
+        const tx = await gateway
+          .connect(user1)
+          .createPool(await jusd.getAddress(), await wcbtc.getAddress(), 3000, sqrtPriceX96);
+
+        await expect(tx).to.emit(gateway, "PoolCreated");
+      });
+
+      it("Should use default fee when fee is 0", async function () {
+        const { gateway, user1, jusd, wcbtc } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+
+        const tx = await gateway
+          .connect(user1)
+          .createPool(await jusd.getAddress(), await wcbtc.getAddress(), 0, sqrtPriceX96);
+
+        // Should emit event with fee=3000 (default)
+        await expect(tx).to.emit(gateway, "PoolCreated");
+      });
+
+      it("Should revert for JUICE/JUSD pair", async function () {
+        const { gateway, user1, juice, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+
+        await expect(
+          gateway.connect(user1).createPool(await juice.getAddress(), await jusd.getAddress(), 3000, sqrtPriceX96)
+        ).to.be.revertedWithCustomError(gateway, "JuiceCannotPairWithUsd");
+      });
+
+      it("Should revert for same token pair", async function () {
+        const { gateway, user1, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+
+        await expect(
+          gateway.connect(user1).createPool(await jusd.getAddress(), await jusd.getAddress(), 3000, sqrtPriceX96)
+        ).to.be.revertedWithCustomError(gateway, "InvalidTokenPair");
+      });
+
+      it("Should revert for invalid fee tier", async function () {
+        const { gateway, user1, jusd, wcbtc } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+
+        await expect(
+          gateway.connect(user1).createPool(await jusd.getAddress(), await wcbtc.getAddress(), 1_000_000, sqrtPriceX96)
+        ).to.be.revertedWithCustomError(gateway, "InvalidFee");
+      });
+
+      it("Should revert for zero sqrt price", async function () {
+        const { gateway, user1, juice, wcbtc } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        await expect(
+          gateway.connect(user1).createPool(await juice.getAddress(), await wcbtc.getAddress(), 3000, 0)
+        ).to.be.revertedWithCustomError(gateway, "InvalidPrice");
+      });
+    });
+
+    describe("createPoolAndAddLiquidity", function () {
+      it("Should create pool and add liquidity in one transaction", async function () {
+        const { gateway, user1, jusd, wcbtc, svJusd, positionManager } = await loadFixture(
+          deployGatewayWithBalancesFixture
+        );
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const sqrtPriceX96 = BigInt("79228162514264337593543950336"); // 1:1
+        const jusdAmount = ethers.parseEther("100");
+        const wcbtcAmount = ethers.parseEther("100");
+
+        // Calculate svJUSD shares
+        const svJusdShares = await svJusd.convertToShares(jusdAmount);
+
+        // Setup mock
+        const svJusdAddr = await svJusd.getAddress();
+        const wcbtcAddr = await wcbtc.getAddress();
+        const [amount0, amount1] = svJusdAddr < wcbtcAddr ? [svJusdShares, wcbtcAmount] : [wcbtcAmount, svJusdShares];
+
+        await positionManager.setMintResult(1, 100, amount0, amount1);
+
+        // Approve tokens
+        await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
+        await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
+
+        const tx = await gateway.connect(user1).createPoolAndAddLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          sqrtPriceX96,
+          0, // full range
+          0,
+          jusdAmount,
+          wcbtcAmount,
+          0,
+          0,
+          user1.address,
+          deadline
+        );
+
+        // Should emit both events
+        await expect(tx).to.emit(gateway, "PoolCreated");
+        await expect(tx).to.emit(gateway, "LiquidityAdded");
+      });
+
+      it("Should revert if deadline expired", async function () {
+        const { gateway, user1, jusd, wcbtc } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const expiredDeadline = (await time.latest()) - 1;
+        const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+        const amount = ethers.parseEther("100");
+
+        await jusd.connect(user1).approve(await gateway.getAddress(), amount);
+        await wcbtc.connect(user1).approve(await gateway.getAddress(), amount);
+
+        await expect(
+          gateway
+            .connect(user1)
+            .createPoolAndAddLiquidity(
+              await jusd.getAddress(),
+              await wcbtc.getAddress(),
+              3000,
+              sqrtPriceX96,
+              0,
+              0,
+              amount,
+              amount,
+              0,
+              0,
+              user1.address,
+              expiredDeadline
+            )
+        ).to.be.revertedWithCustomError(gateway, "DeadlineExpired");
+      });
+
+      it("Should revert for JUICE/JUSD pair", async function () {
+        const { gateway, user1, juice, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+        const amount = ethers.parseEther("100");
+
+        await expect(
+          gateway
+            .connect(user1)
+            .createPoolAndAddLiquidity(
+              await juice.getAddress(),
+              await jusd.getAddress(),
+              3000,
+              sqrtPriceX96,
+              0,
+              0,
+              amount,
+              amount,
+              0,
+              0,
+              user1.address,
+              deadline
+            )
+        ).to.be.revertedWithCustomError(gateway, "JuiceCannotPairWithUsd");
+      });
+
+      it("Should work with JUICE/WcBTC pair", async function () {
+        const { gateway, user1, juice, wcbtc, positionManager } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+        const juiceAmount = ethers.parseEther("100");
+        const wcbtcAmount = ethers.parseEther("100");
+
+        // Setup mock
+        const juiceAddr = await juice.getAddress();
+        const wcbtcAddr = await wcbtc.getAddress();
+        const [amount0, amount1] = juiceAddr < wcbtcAddr ? [juiceAmount, wcbtcAmount] : [wcbtcAmount, juiceAmount];
+
+        await positionManager.setMintResult(1, 100, amount0, amount1);
+
+        // Approve tokens
+        await juice.connect(user1).approve(await gateway.getAddress(), juiceAmount);
+        await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
+
+        const tx = await gateway
+          .connect(user1)
+          .createPoolAndAddLiquidity(
+            await juice.getAddress(),
+            await wcbtc.getAddress(),
+            3000,
+            sqrtPriceX96,
+            0,
+            0,
+            juiceAmount,
+            wcbtcAmount,
+            0,
+            0,
+            user1.address,
+            deadline
+          );
+
+        await expect(tx).to.emit(gateway, "PoolCreated");
+        await expect(tx).to.emit(gateway, "LiquidityAdded");
+      });
+    });
+
+    describe("Price Conversion", function () {
+      it("Should not convert price when neither token is JUSD-based", async function () {
+        const { gateway, user1, juice, wcbtc } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        // JUICE/WcBTC - no conversion needed
+        const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+
+        // This should work without any price conversion issues
+        const tx = await gateway
+          .connect(user1)
+          .createPool(await juice.getAddress(), await wcbtc.getAddress(), 3000, sqrtPriceX96);
+
+        await expect(tx).to.emit(gateway, "PoolCreated");
+      });
+
+      it("Should convert price when JUSD is involved", async function () {
+        const { gateway, user1, jusd, wcbtc, svJusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        // Simulate interest accrual (1 svJUSD = 1.1 JUSD)
+        await svJusd.accrueInterest(ethers.parseEther("10"));
+
+        const sqrtPriceX96 = BigInt("79228162514264337593543950336"); // 1:1 in JUSD terms
+
+        // This should create pool with adjusted price for svJUSD
+        const tx = await gateway
+          .connect(user1)
+          .createPool(await jusd.getAddress(), await wcbtc.getAddress(), 3000, sqrtPriceX96);
+
+        await expect(tx).to.emit(gateway, "PoolCreated");
       });
     });
   });

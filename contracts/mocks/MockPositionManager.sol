@@ -51,6 +51,11 @@ contract MockPositionManager is ERC721 {
     uint256 private _mockIncreaseAmount0;
     uint256 private _mockIncreaseAmount1;
 
+    // Pool creation state
+    mapping(bytes32 => address) private _pools;
+    uint256 private _poolCounter = 1;
+    address private _nextPoolAddress;
+
     constructor() ERC721("Mock Position", "MPOS") {
         _factory = new MockFactory();
     }
@@ -62,11 +67,9 @@ contract MockPositionManager is ERC721 {
     /**
      * @notice Mock mint function
      */
-    function mint(MintParams calldata params)
-        external
-        payable
-        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1)
-    {
+    function mint(
+        MintParams calldata params
+    ) external payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1) {
         // Use preset values if available, otherwise calculate
         tokenId = _mockTokenId > 0 ? _mockTokenId : _nextTokenId++;
         liquidity = _mockLiquidity > 0 ? _mockLiquidity : 100;
@@ -117,15 +120,10 @@ contract MockPositionManager is ERC721 {
     /**
      * @notice Mock increaseLiquidity function
      */
-    function increaseLiquidity(IncreaseLiquidityParams calldata params)
-        external
-        payable
-        returns (uint128 liquidity, uint256 amount0, uint256 amount1)
-    {
-        require(
-            ownerOf(params.tokenId) == msg.sender || getApproved(params.tokenId) == msg.sender,
-            "Not authorized"
-        );
+    function increaseLiquidity(
+        IncreaseLiquidityParams calldata params
+    ) external payable returns (uint128 liquidity, uint256 amount0, uint256 amount1) {
+        require(ownerOf(params.tokenId) == msg.sender || getApproved(params.tokenId) == msg.sender, "Not authorized");
 
         // Use preset values if available, otherwise use desired amounts
         liquidity = _mockIncreaseLiquidity > 0 ? _mockIncreaseLiquidity : 100;
@@ -151,15 +149,10 @@ contract MockPositionManager is ERC721 {
     /**
      * @notice Mock decreaseLiquidity function
      */
-    function decreaseLiquidity(DecreaseLiquidityParams calldata params)
-        external
-        payable
-        returns (uint256 amount0, uint256 amount1)
-    {
-        require(
-            ownerOf(params.tokenId) == msg.sender || getApproved(params.tokenId) == msg.sender,
-            "Not authorized"
-        );
+    function decreaseLiquidity(
+        DecreaseLiquidityParams calldata params
+    ) external payable returns (uint256 amount0, uint256 amount1) {
+        require(ownerOf(params.tokenId) == msg.sender || getApproved(params.tokenId) == msg.sender, "Not authorized");
 
         Position storage pos = _positions[params.tokenId];
         require(pos.liquidity >= params.liquidity, "Insufficient liquidity");
@@ -182,15 +175,8 @@ contract MockPositionManager is ERC721 {
     /**
      * @notice Mock collect function
      */
-    function collect(CollectParams calldata params)
-        external
-        payable
-        returns (uint256 amount0, uint256 amount1)
-    {
-        require(
-            ownerOf(params.tokenId) == msg.sender || getApproved(params.tokenId) == msg.sender,
-            "Not authorized"
-        );
+    function collect(CollectParams calldata params) external payable returns (uint256 amount0, uint256 amount1) {
+        require(ownerOf(params.tokenId) == msg.sender || getApproved(params.tokenId) == msg.sender, "Not authorized");
 
         Position storage pos = _positions[params.tokenId];
 
@@ -216,7 +202,9 @@ contract MockPositionManager is ERC721 {
     /**
      * @notice Get position data (mimics Uniswap V3)
      */
-    function positions(uint256 tokenId)
+    function positions(
+        uint256 tokenId
+    )
         external
         view
         returns (
@@ -247,18 +235,13 @@ contract MockPositionManager is ERC721 {
             0, // feeGrowthInside0LastX128
             0, // feeGrowthInside1LastX128
             0, // tokensOwed0
-            0  // tokensOwed1
+            0 // tokensOwed1
         );
     }
 
     // ========== Test Helpers ==========
 
-    function setMintResult(
-        uint256 tokenId,
-        uint128 liquidity,
-        uint256 amount0,
-        uint256 amount1
-    ) external {
+    function setMintResult(uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1) external {
         _mockTokenId = tokenId;
         _mockLiquidity = liquidity;
         _mockAmount0 = amount0;
@@ -276,12 +259,7 @@ contract MockPositionManager is ERC721 {
         _mockIncreaseAmount1 = amount1;
     }
 
-    function setPositionData(
-        uint256 tokenId,
-        address token0,
-        address token1,
-        uint128 liquidity
-    ) external {
+    function setPositionData(uint256 tokenId, address token0, address token1, uint128 liquidity) external {
         _positions[tokenId] = Position({
             token0: token0,
             token1: token1,
@@ -294,6 +272,60 @@ contract MockPositionManager is ERC721 {
 
     function mintNFT(address to, uint256 tokenId) external {
         _mint(to, tokenId);
+    }
+
+    // ========== Pool Creation ==========
+
+    /**
+     * @notice Mock createAndInitializePoolIfNecessary
+     */
+    function createAndInitializePoolIfNecessary(
+        address token0,
+        address token1,
+        uint24 fee,
+        uint160 /* sqrtPriceX96 */
+    ) external payable returns (address pool) {
+        // Use preset mock address if set
+        if (_nextPoolAddress != address(0)) {
+            pool = _nextPoolAddress;
+            _nextPoolAddress = address(0);
+            return pool;
+        }
+
+        // Check if pool exists
+        bytes32 key = keccak256(abi.encodePacked(token0, token1, fee));
+        pool = _pools[key];
+
+        if (pool == address(0)) {
+            // Create new mock pool address
+            pool = address(uint160(0x1000 + _poolCounter++));
+            _pools[key] = pool;
+        }
+
+        return pool;
+    }
+
+    /**
+     * @notice Get pool address for a token pair
+     */
+    function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address) {
+        (address t0, address t1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        return _pools[keccak256(abi.encodePacked(t0, t1, fee))];
+    }
+
+    /**
+     * @notice Test helper to preset the next pool address
+     */
+    function setNextPoolAddress(address pool) external {
+        _nextPoolAddress = pool;
+    }
+
+    /**
+     * @notice Test helper to set a pool for a token pair
+     */
+    function setPool(address tokenA, address tokenB, uint24 fee, address pool) external {
+        (address t0, address t1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+        _pools[keccak256(abi.encodePacked(t0, t1, fee))] = pool;
     }
 
     receive() external payable {}

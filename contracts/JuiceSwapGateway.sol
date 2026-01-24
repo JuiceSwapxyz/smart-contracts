@@ -57,6 +57,7 @@ interface ISwapRouter {
 
 interface IUniswapV3Factory {
     function feeAmountTickSpacing(uint24 fee) external view returns (int24);
+    function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool);
 }
 
 interface INonfungiblePositionManager {
@@ -132,6 +133,13 @@ interface INonfungiblePositionManager {
             uint128 tokensOwed0,
             uint128 tokensOwed1
         );
+
+    function createAndInitializePoolIfNecessary(
+        address token0,
+        address token1,
+        uint24 fee,
+        uint160 sqrtPriceX96
+    ) external payable returns (address pool);
 }
 
 /**
@@ -192,6 +200,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     error BridgedTokenNotFound(address token);
     error InvalidBridgeConfig();
     error NotApprovedMinter(address bridge);
+    error InvalidPrice();
 
     /**
      * @notice Initializes the JuiceSwap Gateway for Uniswap V3
@@ -1194,6 +1203,102 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         }
     }
 
+    /**
+     * @dev Checks if a token converts to svJUSD for liquidity operations
+     */
+    function _isConvertibleToSvJusd(address token) internal view returns (bool) {
+        if (token == address(JUSD)) return true;
+        if (address(bridgeConfigs[token].bridge) != address(0)) return true;
+        return false;
+    }
+
+    /**
+     * @dev Babylonian square root implementation
+     */
+    function _sqrt(uint256 x) internal pure returns (uint256 y) {
+        if (x == 0) return 0;
+        uint256 z = (x + 1) / 2;
+        y = x;
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
+        }
+    }
+
+    /**
+     * @dev Multiplies sqrtPriceX96 by sqrt(factor/1e18) for price conversion
+     * @notice Used when token0 is JUSD-based and converts to svJUSD
+     */
+    function _mulSqrtPrice(uint160 sqrtPriceX96, uint256 factor) internal pure returns (uint160) {
+        // We need to compute: sqrtPriceX96 * sqrt(factor / 1e18)
+        // = sqrtPriceX96 * sqrt(factor) / sqrt(1e18)
+        // = sqrtPriceX96 * sqrt(factor) / 1e9
+        uint256 sqrtFactor = _sqrt(factor);
+        uint256 result = (uint256(sqrtPriceX96) * sqrtFactor) / 1e9;
+        if (result > type(uint160).max) revert InvalidPrice();
+        return uint160(result);
+    }
+
+    /**
+     * @dev Divides sqrtPriceX96 by sqrt(factor/1e18) for price conversion
+     * @notice Used when token1 is JUSD-based and converts to svJUSD
+     */
+    function _divSqrtPrice(uint160 sqrtPriceX96, uint256 factor) internal pure returns (uint160) {
+        // We need to compute: sqrtPriceX96 / sqrt(factor / 1e18)
+        // = sqrtPriceX96 * sqrt(1e18) / sqrt(factor)
+        // = sqrtPriceX96 * 1e9 / sqrt(factor)
+        uint256 sqrtFactor = _sqrt(factor);
+        if (sqrtFactor == 0) revert InvalidPrice();
+        uint256 result = (uint256(sqrtPriceX96) * 1e9) / sqrtFactor;
+        if (result > type(uint160).max) revert InvalidPrice();
+        return uint160(result);
+    }
+
+    /**
+     * @dev Converts user-facing sqrtPriceX96 to actual pool sqrtPriceX96
+     * @notice Handles the svJUSD/JUSD share price ratio for price adjustment
+     *         sqrtPriceX96 = sqrt(token1/token0) * 2^96
+     *         When token0 converts to svJUSD: price increases (multiply by sqrt(sharePrice))
+     *         When token1 converts to svJUSD: price decreases (divide by sqrt(sharePrice))
+     */
+    function _convertSqrtPrice(
+        address userTokenA,
+        address userTokenB,
+        uint160 sqrtPriceX96
+    ) internal view returns (uint160) {
+        address actualTokenA = _getActualTokenForLiquidity(userTokenA);
+        address actualTokenB = _getActualTokenForLiquidity(userTokenB);
+
+        // Determine token ordering (Uniswap requires token0 < token1)
+        bool isAToken0 = actualTokenA < actualTokenB;
+        address userToken0 = isAToken0 ? userTokenA : userTokenB;
+        address userToken1 = isAToken0 ? userTokenB : userTokenA;
+
+        bool token0Converts = _isConvertibleToSvJusd(userToken0);
+        bool token1Converts = _isConvertibleToSvJusd(userToken1);
+
+        // No conversion needed if neither token is JUSD-based
+        if (!token0Converts && !token1Converts) {
+            return sqrtPriceX96;
+        }
+
+        // Both tokens converting to svJUSD is invalid (would be same token)
+        if (token0Converts && token1Converts) {
+            revert InvalidTokenPair(userTokenA, userTokenB);
+        }
+
+        // sharePrice = JUSD per svJUSD (e.g., 1.05e18 means 1 svJUSD = 1.05 JUSD)
+        uint256 sharePrice = SV_JUSD.convertToAssets(1e18);
+
+        if (token0Converts) {
+            // token0 is JUSD-based → becomes more valuable in svJUSD terms → price increases
+            return _mulSqrtPrice(sqrtPriceX96, sharePrice);
+        } else {
+            // token1 is JUSD-based → becomes more valuable in svJUSD terms → price decreases
+            return _divSqrtPrice(sqrtPriceX96, sharePrice);
+        }
+    }
+
     // ==================== Bridge Registration (Permissionless) ====================
 
     /**
@@ -1237,6 +1342,188 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
      */
     function getBridgedTokens() external view returns (address[] memory) {
         return bridgedTokens;
+    }
+
+    // ==================== Pool Creation ====================
+
+    /**
+     * @notice View function to check if a pool exists for a token pair
+     * @dev Converts user tokens to actual pool tokens before checking
+     */
+    function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool, bool exists) {
+        address actualTokenA = _getActualTokenForLiquidity(tokenA);
+        address actualTokenB = _getActualTokenForLiquidity(tokenB);
+        uint24 effectiveFee = fee == 0 ? DEFAULT_FEE : fee;
+
+        pool = FACTORY.getPool(actualTokenA, actualTokenB, effectiveFee);
+        exists = pool != address(0);
+    }
+
+    /**
+     * @notice Creates and initializes a new pool if it doesn't exist
+     * @dev Converts user-facing tokens to actual pool tokens and adjusts price accordingly
+     */
+    function createPool(
+        address tokenA,
+        address tokenB,
+        uint24 fee,
+        uint160 sqrtPriceX96
+    ) external nonReentrant returns (address pool) {
+        // Validate tokens
+        if (tokenA == tokenB) revert InvalidTokenPair(tokenA, tokenB);
+
+        // JUICE restriction for liquidity pools
+        if (tokenA == address(JUICE) || tokenB == address(JUICE)) {
+            address otherToken = tokenA == address(JUICE) ? tokenB : tokenA;
+            if (_isUsdToken(otherToken) || otherToken == address(SV_JUSD)) {
+                revert JuiceCannotPairWithUsd(otherToken);
+            }
+        }
+
+        // Prevent redundant pools (both tokens map to svJUSD)
+        address actualTokenA = _getActualTokenForLiquidity(tokenA);
+        address actualTokenB = _getActualTokenForLiquidity(tokenB);
+        if (actualTokenA == actualTokenB) {
+            revert InvalidTokenPair(tokenA, tokenB);
+        }
+
+        // Use default fee if 0
+        uint24 effectiveFee = fee == 0 ? DEFAULT_FEE : fee;
+        if (effectiveFee >= 1_000_000) revert InvalidFee(effectiveFee);
+
+        // Ensure token ordering (token0 < token1)
+        (address token0, address token1) = actualTokenA < actualTokenB
+            ? (actualTokenA, actualTokenB)
+            : (actualTokenB, actualTokenA);
+
+        // Convert price if needed
+        uint160 actualSqrtPriceX96 = _convertSqrtPrice(tokenA, tokenB, sqrtPriceX96);
+        if (actualSqrtPriceX96 == 0) revert InvalidPrice();
+
+        // Create and initialize pool
+        pool = POSITION_MANAGER.createAndInitializePoolIfNecessary(token0, token1, effectiveFee, actualSqrtPriceX96);
+
+        emit PoolCreated(msg.sender, tokenA, tokenB, token0, token1, effectiveFee, pool);
+
+        return pool;
+    }
+
+    /**
+     * @notice Creates a pool and adds initial liquidity in a single transaction
+     * @dev Combines createPool() and addLiquidity() for gas efficiency
+     */
+    function createPoolAndAddLiquidity(
+        address tokenA,
+        address tokenB,
+        uint24 fee,
+        uint160 sqrtPriceX96,
+        int24 tickLower,
+        int24 tickUpper,
+        uint256 amountADesired,
+        uint256 amountBDesired,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        address to,
+        uint256 deadline
+    ) external payable nonReentrant returns (address pool, uint256 amountA, uint256 amountB, uint256 liquidity) {
+        if (block.timestamp > deadline) revert DeadlineExpired();
+
+        // Validate tokens
+        if (tokenA == tokenB) revert InvalidTokenPair(tokenA, tokenB);
+
+        // JUICE liquidity restriction
+        if (tokenA == address(JUICE) || tokenB == address(JUICE)) {
+            address otherToken = tokenA == address(JUICE) ? tokenB : tokenA;
+            if (_isUsdToken(otherToken) || otherToken == address(SV_JUSD)) {
+                revert JuiceCannotPairWithUsd(otherToken);
+            }
+        }
+
+        // Get actual tokens and validate
+        address actualTokenA = _getActualTokenForLiquidity(tokenA);
+        address actualTokenB = _getActualTokenForLiquidity(tokenB);
+        if (actualTokenA == actualTokenB) {
+            revert InvalidTokenPair(tokenA, tokenB);
+        }
+
+        // Use default fee if 0
+        uint24 effectiveFee = fee == 0 ? DEFAULT_FEE : fee;
+        if (effectiveFee >= 1_000_000) revert InvalidFee(effectiveFee);
+
+        // Token ordering
+        bool isAToken0 = actualTokenA < actualTokenB;
+        (address token0, address token1) = isAToken0 ? (actualTokenA, actualTokenB) : (actualTokenB, actualTokenA);
+
+        // Create pool if necessary
+        uint160 actualSqrtPriceX96 = _convertSqrtPrice(tokenA, tokenB, sqrtPriceX96);
+        if (actualSqrtPriceX96 == 0) revert InvalidPrice();
+
+        pool = POSITION_MANAGER.createAndInitializePoolIfNecessary(token0, token1, effectiveFee, actualSqrtPriceX96);
+
+        emit PoolCreated(msg.sender, tokenA, tokenB, token0, token1, effectiveFee, pool);
+
+        // Convert input tokens
+        (, uint256 actualAmountADesired) = _handleTokenInForLiquidity(tokenA, amountADesired);
+        (, uint256 actualAmountBDesired) = _handleTokenInForLiquidity(tokenB, amountBDesired);
+
+        // Calculate minimums
+        uint256 actualAmountAMin = _toActualMinAmountForLiquidity(tokenA, amountAMin);
+        uint256 actualAmountBMin = _toActualMinAmountForLiquidity(tokenB, amountBMin);
+
+        (uint256 amount0Desired, uint256 amount1Desired) = isAToken0
+            ? (actualAmountADesired, actualAmountBDesired)
+            : (actualAmountBDesired, actualAmountADesired);
+
+        (uint256 amount0Min, uint256 amount1Min) = isAToken0
+            ? (actualAmountAMin, actualAmountBMin)
+            : (actualAmountBMin, actualAmountAMin);
+
+        // Tick range
+        int24 actualTickLower;
+        int24 actualTickUpper;
+        if (tickLower == tickUpper) {
+            (actualTickLower, actualTickUpper) = _getFullRangeTicks(effectiveFee);
+        } else {
+            _validateTicks(tickLower, tickUpper, effectiveFee);
+            actualTickLower = tickLower;
+            actualTickUpper = tickUpper;
+        }
+
+        // Mint position
+        INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
+            token0: token0,
+            token1: token1,
+            fee: effectiveFee,
+            tickLower: actualTickLower,
+            tickUpper: actualTickUpper,
+            amount0Desired: amount0Desired,
+            amount1Desired: amount1Desired,
+            amount0Min: amount0Min,
+            amount1Min: amount1Min,
+            recipient: to,
+            deadline: deadline
+        });
+
+        (uint256 tokenId, , uint256 amount0, uint256 amount1) = POSITION_MANAGER.mint(params);
+
+        // Map back to A/B order
+        (amountA, amountB) = isAToken0 ? (amount0, amount1) : (amount1, amount0);
+        liquidity = tokenId;
+
+        // Return excess tokens
+        uint256 excessA = isAToken0
+            ? (amount0Desired > amount0 ? amount0Desired - amount0 : 0)
+            : (amount1Desired > amount1 ? amount1Desired - amount1 : 0);
+        uint256 excessB = isAToken0
+            ? (amount1Desired > amount1 ? amount1Desired - amount1 : 0)
+            : (amount0Desired > amount0 ? amount0Desired - amount0 : 0);
+
+        _returnExcess(tokenA, actualTokenA, excessA, msg.sender);
+        _returnExcess(tokenB, actualTokenB, excessB, msg.sender);
+
+        emit LiquidityAdded(msg.sender, tokenA, tokenB, amountA, amountB, tokenId);
+
+        return (pool, amountA, amountB, liquidity);
     }
 
     /**
