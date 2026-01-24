@@ -26,9 +26,11 @@ contract MockStablecoinBridge {
     uint256 public immutable horizon;
     uint256 public immutable limit;
     uint256 public minted;
+    bool public stopped;
 
     error Expired();
     error LimitExceeded();
+    error Stopped();
 
     constructor(address _usd, address _jusd, uint256 _limit, uint256 _weeks) {
         usd = IERC20(_usd);
@@ -44,6 +46,7 @@ contract MockStablecoinBridge {
     }
 
     function mintTo(address target, uint256 amount) public {
+        if (stopped) revert Stopped();
         if (block.timestamp > horizon) revert Expired();
 
         usd.safeTransferFrom(msg.sender, address(this), amount);
@@ -83,5 +86,9 @@ contract MockStablecoinBridge {
     // Test helpers
     function setMinted(uint256 _minted) external {
         minted = _minted;
+    }
+
+    function setStopped(bool _stopped) external {
+        stopped = _stopped;
     }
 }

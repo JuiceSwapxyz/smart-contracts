@@ -2691,7 +2691,33 @@ describe("JuiceSwapGateway", function () {
         // Do NOT set bridge as minter - should fail
         await expect(
           gateway.connect(user1).registerBridgedToken(await newBridge.getAddress())
-        ).to.be.revertedWithCustomError(gateway, "NotApprovedMinter");
+        ).to.be.revertedWithCustomError(gateway, "BridgeNotApprovedMinter");
+      });
+
+      it("Should revert when bridge is stopped", async function () {
+        const { gateway, user1, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const newToken = await MockERC20Factory.deploy("New Token", "NEW", 6);
+
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+        const newBridge = await MockBridgeFactory.deploy(
+          await newToken.getAddress(),
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        // Set bridge as approved minter
+        await jusd.setMinter(await newBridge.getAddress(), true);
+
+        // Stop the bridge
+        await newBridge.setStopped(true);
+
+        // Should fail because bridge is stopped
+        await expect(
+          gateway.connect(user1).registerBridgedToken(await newBridge.getAddress())
+        ).to.be.revertedWithCustomError(gateway, "BridgeStopped");
       });
 
       it("Should revert when registering duplicate bridged token", async function () {
@@ -2825,6 +2851,32 @@ describe("JuiceSwapGateway", function () {
           )
         ).to.emit(gateway, "SwapExecuted")
           .withArgs(user1.address, await usdc.getAddress(), await wcbtc.getAddress(), anyValue, anyValue);
+      });
+
+      it("Should revert when swapping from stopped bridge", async function () {
+        const { gateway, user1, usdc, wcbtc, usdcBridge } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const swapAmount = 1000n * 10n ** 6n;
+
+        await usdc.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+        // Stop the bridge
+        await usdcBridge.setStopped(true);
+
+        // Swap should revert with bridge's Stopped error
+        await expect(
+          gateway.connect(user1).swapExactTokensForTokens(
+            await usdc.getAddress(),
+            await wcbtc.getAddress(),
+            0,
+            swapAmount,
+            0,
+            user1.address,
+            deadline
+          )
+        ).to.be.revertedWithCustomError(usdcBridge, "Stopped");
       });
     });
 
@@ -3281,6 +3333,22 @@ describe("JuiceSwapGateway", function () {
         expect(status.mintCapacity).to.equal(BRIDGE_LIMIT - mintedAmount);
         expect(status.burnCapacity).to.equal(bridgeAmount);
         expect(status.mintBlockReason).to.equal("");
+        expect(status.burnBlockReason).to.equal("");
+      });
+
+      it("Should return stopped status when bridge is stopped", async function () {
+        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        // Stop the bridge
+        await usdcBridge.setStopped(true);
+
+        const status = await gateway.getBridgeStatus(await usdc.getAddress());
+
+        expect(status.canMint).to.be.false;
+        expect(status.canBurn).to.be.true; // Burn should still work (bridge allows burn when stopped)
+        expect(status.mintCapacity).to.equal(0);
+        expect(status.burnCapacity).to.equal(bridgeAmount);
+        expect(status.mintBlockReason).to.equal("Bridge stopped");
         expect(status.burnBlockReason).to.equal("");
       });
 
