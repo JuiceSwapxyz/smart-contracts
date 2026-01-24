@@ -254,18 +254,25 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         // Step 2: Handle output token conversion
         address actualTokenOut = _getActualToken(tokenOut);
 
-        // Step 3: Execute swap through Uniswap V3 SwapRouter
-        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
-            tokenIn: actualTokenIn,
-            tokenOut: actualTokenOut,
-            fee: effectiveFee,
-            recipient: address(this),
-            amountIn: actualAmountIn,
-            amountOutMinimum: 0, // Slippage checked after conversions
-            sqrtPriceLimitX96: 0
-        });
-
-        uint256 actualAmountOut = SWAP_ROUTER.exactInputSingle(params);
+        // Step 3: Execute swap through Uniswap V3 SwapRouter (skip if same token)
+        // This handles bridged stablecoin conversions (e.g., JUSD → USDT.e, SUSD → JUSD)
+        // where both tokens resolve to svJUSD internally - no swap needed, just bridge conversion
+        uint256 actualAmountOut;
+        if (actualTokenIn == actualTokenOut) {
+            // No swap needed - direct bridge-to-bridge or stablecoin conversion
+            actualAmountOut = actualAmountIn;
+        } else {
+            ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+                tokenIn: actualTokenIn,
+                tokenOut: actualTokenOut,
+                fee: effectiveFee,
+                recipient: address(this),
+                amountIn: actualAmountIn,
+                amountOutMinimum: 0, // Slippage checked after conversions
+                sqrtPriceLimitX96: 0
+            });
+            actualAmountOut = SWAP_ROUTER.exactInputSingle(params);
+        }
 
         // Step 4: Convert output token back to user-facing token
         amountOut = _handleTokenOut(tokenOut, actualAmountOut, to);
