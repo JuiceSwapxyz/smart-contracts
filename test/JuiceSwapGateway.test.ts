@@ -7049,6 +7049,124 @@ describe("JuiceSwapGateway", function () {
     });
   });
 
+  describe("JUICE Liquidity in increaseLiquidity", function () {
+    it("Should correctly return JUICE amounts when increasing JUICE liquidity", async function () {
+      const { gateway, user1, juice, wcbtc, positionManager } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const juiceAmount = ethers.parseEther("100");
+      const wcbtcAmount = ethers.parseEther("1");
+
+      // Token ordering: Uniswap V3 requires token0 < token1
+      const juiceAddr = await juice.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const [amount0, amount1] = juiceAddr < wcbtcAddr ? [juiceAmount, wcbtcAmount] : [wcbtcAmount, juiceAmount];
+      await positionManager.setMintResult(1, 1000, amount0, amount1);
+
+      await juice.connect(user1).approve(await gateway.getAddress(), juiceAmount * 2n);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount * 2n);
+
+      // Create initial JUICE/WcBTC position
+      await gateway
+        .connect(user1)
+        .addLiquidity(
+          await juice.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          0,
+          0,
+          juiceAmount,
+          wcbtcAmount,
+          0,
+          0,
+          user1.address,
+          deadline
+        );
+
+      // Approve NFT for gateway
+      await positionManager.connect(user1).setApprovalForAll(await gateway.getAddress(), true);
+
+      // Set position data for the NFT (JUICE/WcBTC pool)
+      await positionManager.setPositionData(
+        1,
+        juiceAddr < wcbtcAddr ? juiceAddr : wcbtcAddr,
+        juiceAddr < wcbtcAddr ? wcbtcAddr : juiceAddr,
+        1000
+      );
+
+      // Set increase result - JUICE amounts should be returned correctly
+      const increaseJuice = ethers.parseEther("50");
+      const increaseWcbtc = ethers.parseEther("0.5");
+      const [incAmount0, incAmount1] =
+        juiceAddr < wcbtcAddr ? [increaseJuice, increaseWcbtc] : [increaseWcbtc, increaseJuice];
+      await positionManager.setIncreaseResult(500, incAmount0, incAmount1);
+
+      // Increase liquidity with JUICE
+      const tx = await gateway
+        .connect(user1)
+        .increaseLiquidity(
+          1,
+          await juice.getAddress(),
+          await wcbtc.getAddress(),
+          juiceAmount,
+          wcbtcAmount,
+          0,
+          0,
+          deadline
+        );
+
+      // Verify event emits correct JUICE amount (not converted)
+      await expect(tx)
+        .to.emit(gateway, "LiquidityIncreased")
+        .withArgs(user1.address, 1, increaseJuice, increaseWcbtc, 500);
+    });
+
+    it("Should revert when increasing liquidity with JUICE paired to USD token", async function () {
+      const { gateway, user1, juice, jusd, wcbtc, svJusd, positionManager } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("100");
+
+      // First create a valid svJUSD/WcBTC position
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const svJusdShares = await svJusd.convertToShares(amount);
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr ? [svJusdShares, amount] : [amount, svJusdShares];
+      await positionManager.setMintResult(1, 1000, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount * 2n);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), amount * 2n);
+
+      await gateway
+        .connect(user1)
+        .addLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          0,
+          0,
+          amount,
+          amount,
+          0,
+          0,
+          user1.address,
+          deadline
+        );
+
+      await positionManager.connect(user1).setApprovalForAll(await gateway.getAddress(), true);
+      await juice.connect(user1).approve(await gateway.getAddress(), amount);
+
+      // Try to increase with JUICE + JUSD (invalid pair)
+      await expect(
+        gateway
+          .connect(user1)
+          .increaseLiquidity(1, await juice.getAddress(), await jusd.getAddress(), amount, amount, 0, 0, deadline)
+      ).to.be.revertedWithCustomError(gateway, "JuiceCannotPairWithUsd");
+    });
+  });
+
   describe("BridgedTokenNotFound Error Paths", function () {
     it("Should revert bridgedToSvJusd with BridgedTokenNotFound for unregistered token", async function () {
       const { gateway, wcbtc } = await loadFixture(deployGatewayFixture);

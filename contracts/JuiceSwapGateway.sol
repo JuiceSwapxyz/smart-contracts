@@ -504,9 +504,9 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         _returnExcess(tokenB, actualTokenB, excessB, msg.sender);
 
         // Convert amounts back to user-facing token units for return values and event
-        // (amountA/amountB are currently in svJUSD terms if user passed JUSD or bridged USD)
-        uint256 userAmountA = _toUserAmount(tokenA, amountA);
-        uint256 userAmountB = _toUserAmount(tokenB, amountB);
+        // (amountA/amountB are in svJUSD terms if user passed JUSD or bridged USD, or JUICE if JUICE liquidity)
+        uint256 userAmountA = _toUserAmountForLiquidity(tokenA, amountA);
+        uint256 userAmountB = _toUserAmountForLiquidity(tokenB, amountB);
 
         // Return NFT to user
         IERC721(address(POSITION_MANAGER)).safeTransferFrom(address(this), msg.sender, tokenId);
@@ -1112,7 +1112,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     }
 
     /**
-     * @dev Converts actual token amount back to user-facing token amount
+     * @dev Converts actual token amount back to user-facing token amount (for swaps)
      */
     function _toUserAmount(address userToken, uint256 actualAmount) internal view returns (uint256) {
         if (userToken == address(JUSD)) {
@@ -1122,6 +1122,27 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
             // Convert svJUSD to JUSD equivalent, then estimate JUICE
             uint256 jusdAmount = _svJusdToJusdAmount(actualAmount);
             return JUICE.calculateShares(jusdAmount);
+        }
+        // Check if token is a bridged stablecoin
+        BridgeConfig storage config = bridgeConfigs[userToken];
+        if (address(config.bridge) != address(0)) {
+            uint256 jusdAmount = _svJusdToJusdAmount(actualAmount);
+            return _jusdToBridgedAmount(jusdAmount, config.decimals);
+        }
+        return actualAmount;
+    }
+
+    /**
+     * @dev Converts actual token amount back to user-facing token amount (for liquidity)
+     * @notice Unlike _toUserAmount, JUICE stays as JUICE (no conversion needed)
+     */
+    function _toUserAmountForLiquidity(address userToken, uint256 actualAmount) internal view returns (uint256) {
+        if (userToken == address(JUSD)) {
+            return _svJusdToJusdAmount(actualAmount);
+        }
+        if (userToken == address(JUICE)) {
+            // JUICE stays JUICE for liquidity - no conversion needed
+            return actualAmount;
         }
         // Check if token is a bridged stablecoin
         BridgeConfig storage config = bridgeConfigs[userToken];
