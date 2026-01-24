@@ -3153,22 +3153,6 @@ describe("JuiceSwapGateway", function () {
         expect(status.burnBlockReason).to.equal("Token not supported");
       });
 
-      it("Should return stopped status when bridge is stopped", async function () {
-        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
-
-        // Stop the bridge
-        await usdcBridge.setStopped(true);
-
-        const status = await gateway.getBridgeStatus(await usdc.getAddress());
-
-        expect(status.canMint).to.be.false;
-        expect(status.canBurn).to.be.true; // Burn should still work
-        expect(status.mintCapacity).to.equal(0);
-        expect(status.burnCapacity).to.equal(bridgeAmount); // Bridge still has liquidity
-        expect(status.mintBlockReason).to.equal("Bridge stopped");
-        expect(status.burnBlockReason).to.equal("");
-      });
-
       it("Should return expired status when bridge horizon is passed", async function () {
         const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
 
@@ -3247,37 +3231,6 @@ describe("JuiceSwapGateway", function () {
         expect(status.burnBlockReason).to.equal("");
       });
 
-      it("Should handle combined failure: stopped bridge with no liquidity", async function () {
-        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
-
-        // Deploy a new bridged token with empty bridge
-        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
-        const newToken = await MockERC20Factory.deploy("New Token", "NEW", 6);
-
-        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
-        const newBridge = await MockBridgeFactory.deploy(
-          await newToken.getAddress(),
-          await jusd.getAddress(),
-          BRIDGE_LIMIT,
-          BRIDGE_WEEKS
-        );
-
-        // Add to gateway but don't fund the bridge
-        await gateway.connect(owner).addBridgedToken(await newToken.getAddress(), await newBridge.getAddress());
-
-        // Stop the bridge
-        await newBridge.setStopped(true);
-
-        const status = await gateway.getBridgeStatus(await newToken.getAddress());
-
-        // Both mint and burn should be blocked for different reasons
-        expect(status.canMint).to.be.false;
-        expect(status.canBurn).to.be.false;
-        expect(status.mintCapacity).to.equal(0);
-        expect(status.burnCapacity).to.equal(0);
-        expect(status.mintBlockReason).to.equal("Bridge stopped");
-        expect(status.burnBlockReason).to.equal("Insufficient bridge liquidity");
-      });
     });
   });
 });

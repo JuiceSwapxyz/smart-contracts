@@ -603,13 +603,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         string memory mintReason = "";
         uint256 mintCapacity = 0;
 
-        // Check if bridge is stopped
-        if (bridge.stopped()) {
-            canMint = false;
-            mintReason = "Bridge stopped";
-        }
         // Check if bridge is expired
-        else if (block.timestamp > bridge.horizon()) {
+        if (block.timestamp > bridge.horizon()) {
             canMint = false;
             mintReason = "Bridge expired";
         }
