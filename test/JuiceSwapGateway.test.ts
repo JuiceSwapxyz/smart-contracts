@@ -5306,4 +5306,637 @@ describe("JuiceSwapGateway", function () {
       await expect(tx).to.emit(gateway, "SwapExecuted");
     });
   });
+
+  // ==================== Additional Coverage Tests ====================
+
+  describe("createPoolAndAddLiquidity Extended", function () {
+    it("Should return excess tokens when position manager uses less", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, positionManager } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+      const jusdAmount = ethers.parseEther("100");
+      const wcbtcAmount = ethers.parseEther("100");
+
+      // Setup mock to use less than desired (50% of each)
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const svJusdShares = await svJusd.convertToShares(jusdAmount);
+      const usedAmount0 = svJusdAddr < wcbtcAddr ? svJusdShares / 2n : wcbtcAmount / 2n;
+      const usedAmount1 = svJusdAddr < wcbtcAddr ? wcbtcAmount / 2n : svJusdShares / 2n;
+
+      await positionManager.setMintResult(1, 100, usedAmount0, usedAmount1);
+
+      // Approve tokens
+      await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
+
+      const jusdBefore = await jusd.balanceOf(user1.address);
+      const wcbtcBefore = await wcbtc.balanceOf(user1.address);
+
+      await gateway
+        .connect(user1)
+        .createPoolAndAddLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          sqrtPriceX96,
+          0,
+          0,
+          jusdAmount,
+          wcbtcAmount,
+          0,
+          0,
+          user1.address,
+          deadline
+        );
+
+      // User should get excess back (approximately half)
+      const jusdAfter = await jusd.balanceOf(user1.address);
+      const wcbtcAfter = await wcbtc.balanceOf(user1.address);
+
+      // User paid jusdAmount but got some back
+      expect(jusdBefore - jusdAfter).to.be.lessThan(jusdAmount);
+      expect(wcbtcBefore - wcbtcAfter).to.be.lessThan(wcbtcAmount);
+    });
+
+    it("Should revert for same token pair", async function () {
+      const { gateway, user1, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+      const amount = ethers.parseEther("100");
+
+      await expect(
+        gateway
+          .connect(user1)
+          .createPoolAndAddLiquidity(
+            await jusd.getAddress(),
+            await jusd.getAddress(),
+            3000,
+            sqrtPriceX96,
+            0,
+            0,
+            amount,
+            amount,
+            0,
+            0,
+            user1.address,
+            deadline
+          )
+      ).to.be.revertedWithCustomError(gateway, "InvalidTokenPair");
+    });
+
+    it("Should revert for invalid fee", async function () {
+      const { gateway, user1, jusd, wcbtc } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+      const amount = ethers.parseEther("100");
+
+      await expect(
+        gateway.connect(user1).createPoolAndAddLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          1000000, // Invalid: >= 1_000_000
+          sqrtPriceX96,
+          0,
+          0,
+          amount,
+          amount,
+          0,
+          0,
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "InvalidFee");
+    });
+
+    it("Should work with custom tick ranges", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, positionManager } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+      const jusdAmount = ethers.parseEther("100");
+      const wcbtcAmount = ethers.parseEther("100");
+
+      // Custom tick range aligned to tickSpacing=60 for fee=3000
+      const tickLower = -600;
+      const tickUpper = 600;
+
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const svJusdShares = await svJusd.convertToShares(jusdAmount);
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr ? [svJusdShares, wcbtcAmount] : [wcbtcAmount, svJusdShares];
+
+      await positionManager.setMintResult(1, 100, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
+
+      const tx = await gateway
+        .connect(user1)
+        .createPoolAndAddLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          sqrtPriceX96,
+          tickLower,
+          tickUpper,
+          jusdAmount,
+          wcbtcAmount,
+          0,
+          0,
+          user1.address,
+          deadline
+        );
+
+      await expect(tx).to.emit(gateway, "PoolCreated");
+      await expect(tx).to.emit(gateway, "LiquidityAdded");
+    });
+
+    it("Should work with native cBTC input", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, positionManager } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+      const jusdAmount = ethers.parseEther("100");
+      const nativeAmount = ethers.parseEther("1");
+
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const svJusdShares = await svJusd.convertToShares(jusdAmount);
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr ? [svJusdShares, nativeAmount] : [nativeAmount, svJusdShares];
+
+      await positionManager.setMintResult(1, 100, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
+
+      const tx = await gateway.connect(user1).createPoolAndAddLiquidity(
+        await jusd.getAddress(),
+        ethers.ZeroAddress, // Native cBTC
+        3000,
+        sqrtPriceX96,
+        0,
+        0,
+        jusdAmount,
+        nativeAmount,
+        0,
+        0,
+        user1.address,
+        deadline,
+        { value: nativeAmount }
+      );
+
+      await expect(tx).to.emit(gateway, "PoolCreated");
+      await expect(tx).to.emit(gateway, "LiquidityAdded");
+    });
+
+    it("Should revert with InvalidPrice for zero sqrtPriceX96", async function () {
+      const { gateway, user1, jusd, wcbtc } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("100");
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), amount);
+
+      await expect(
+        gateway.connect(user1).createPoolAndAddLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          0, // Invalid: zero price
+          0,
+          0,
+          amount,
+          amount,
+          0,
+          0,
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "InvalidPrice");
+    });
+  });
+
+  describe("Price Math Tests", function () {
+    it("Should handle price conversion with high share price (1 svJUSD = 2 JUSD)", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      // Simulate 100% interest accrual (1 svJUSD = 2 JUSD)
+      await svJusd.accrueInterest(ethers.parseEther("100"));
+
+      const sqrtPriceX96 = BigInt("79228162514264337593543950336"); // 1:1 in JUSD terms
+
+      // This tests _convertSqrtPrice with a significant share price difference
+      const tx = await gateway
+        .connect(user1)
+        .createPool(await jusd.getAddress(), await wcbtc.getAddress(), 3000, sqrtPriceX96);
+
+      await expect(tx).to.emit(gateway, "PoolCreated");
+    });
+
+    it("Should handle price conversion when token1 is JUSD-based", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      // Simulate interest
+      await svJusd.accrueInterest(ethers.parseEther("10"));
+
+      const sqrtPriceX96 = BigInt("79228162514264337593543950336");
+
+      // WcBTC < svJUSD in address ordering, so JUSD becomes token1
+      // This tests _divSqrtPrice path
+      const tx = await gateway
+        .connect(user1)
+        .createPool(await wcbtc.getAddress(), await jusd.getAddress(), 3000, sqrtPriceX96);
+
+      await expect(tx).to.emit(gateway, "PoolCreated");
+    });
+
+    it("Should handle very small sqrt prices", async function () {
+      const { gateway, user1, juice, wcbtc, positionManager } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      // Very small price (close to minimum)
+      const smallSqrtPrice = BigInt("7922816251426433759"); // ~0.0001 price
+
+      const tx = await gateway
+        .connect(user1)
+        .createPool(await juice.getAddress(), await wcbtc.getAddress(), 3000, smallSqrtPrice);
+
+      await expect(tx).to.emit(gateway, "PoolCreated");
+    });
+
+    it("Should handle large sqrt prices", async function () {
+      const { gateway, user1, juice, wcbtc } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      // Large price (but not overflow)
+      const largeSqrtPrice = BigInt("79228162514264337593543950336000"); // 1000:1 price
+
+      const tx = await gateway
+        .connect(user1)
+        .createPool(await juice.getAddress(), await wcbtc.getAddress(), 3000, largeSqrtPrice);
+
+      await expect(tx).to.emit(gateway, "PoolCreated");
+    });
+  });
+
+  describe("JUICE Edge Cases", function () {
+    it("Should swap JUICE to native cBTC output", async function () {
+      const { gateway, user1, juice, wcbtc, jusd, svJusd, swapRouter } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const juiceAmount = ethers.parseEther("100");
+      const expectedOutput = ethers.parseEther("1");
+
+      // Fund JUSD to juice contract for redeem (JUICE redeems to JUSD at 100:1 ratio)
+      // 100 JUICE = 10000 JUSD (PRICE = 100e18)
+      const jusdForRedeem = ethers.parseEther("10000");
+      await jusd.mint(await juice.getAddress(), jusdForRedeem);
+
+      // Setup swap output
+      await swapRouter.setSwapOutput(expectedOutput);
+
+      // Fund wcbtc to swap router for output
+      await wcbtc.deposit({ value: expectedOutput * 2n });
+      await wcbtc.transfer(await swapRouter.getAddress(), expectedOutput * 2n);
+
+      await juice.connect(user1).approve(await gateway.getAddress(), juiceAmount);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      const tx = await gateway.connect(user1).swapExactTokensForTokens(
+        await juice.getAddress(),
+        ethers.ZeroAddress, // Native cBTC output
+        3000,
+        juiceAmount,
+        0,
+        user1.address,
+        deadline
+      );
+
+      await expect(tx).to.emit(gateway, "SwapExecuted");
+    });
+
+    it("Should swap native cBTC to JUICE output", async function () {
+      const { gateway, user1, juice, wcbtc, jusd, svJusd, swapRouter } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const nativeAmount = ethers.parseEther("1");
+      const svJusdOutput = ethers.parseEther("50000"); // svJUSD output from swap
+
+      // Setup swap output (svJUSD)
+      await swapRouter.setSwapOutput(svJusdOutput);
+
+      // Fund svJUSD to swap router via deposit (use explicit function signature)
+      await jusd.mint(await svJusd.getAddress(), svJusdOutput * 2n);
+      await svJusd["mint(address,uint256)"](await swapRouter.getAddress(), svJusdOutput * 2n);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      const tx = await gateway.connect(user1).swapExactTokensForTokens(
+        ethers.ZeroAddress, // Native cBTC input
+        await juice.getAddress(),
+        3000,
+        nativeAmount,
+        0,
+        user1.address,
+        deadline,
+        { value: nativeAmount }
+      );
+
+      await expect(tx).to.emit(gateway, "SwapExecuted");
+    });
+
+    it("Should handle JUICE with maximum slippage check", async function () {
+      const { gateway, user1, juice, wcbtc, jusd, svJusd, swapRouter } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const juiceAmount = ethers.parseEther("100");
+      const minOutput = ethers.parseEther("0.5"); // Set minimum
+      const actualOutput = ethers.parseEther("0.6"); // Above minimum
+
+      // Fund JUSD to juice contract for redeem
+      const jusdForRedeem = ethers.parseEther("10000");
+      await jusd.mint(await juice.getAddress(), jusdForRedeem);
+
+      await swapRouter.setSwapOutput(actualOutput);
+
+      // Fund wcbtc
+      await wcbtc.deposit({ value: actualOutput * 2n });
+      await wcbtc.transfer(await swapRouter.getAddress(), actualOutput * 2n);
+
+      await juice.connect(user1).approve(await gateway.getAddress(), juiceAmount);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      const tx = await gateway
+        .connect(user1)
+        .swapExactTokensForTokens(
+          await juice.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          juiceAmount,
+          minOutput,
+          user1.address,
+          deadline
+        );
+
+      await expect(tx).to.emit(gateway, "SwapExecuted");
+    });
+  });
+
+  describe("Bridge Failure Scenarios", function () {
+    it("Should revert when bridge mint limit is exceeded", async function () {
+      const { gateway, owner, user1, jusd, wcbtc, swapRouter } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      // Deploy a bridged token with very low limit
+      const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+      const usdt = (await MockERC20Factory.deploy("Tether USD", "USDT", 6)) as unknown as MockERC20;
+
+      const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+      const lowLimitBridge = await MockBridgeFactory.deploy(
+        await usdt.getAddress(),
+        await jusd.getAddress(),
+        ethers.parseEther("100"), // Very low limit: 100 JUSD
+        52
+      );
+
+      // Setup JUSD to accept bridge as minter
+      await jusd.setMinter(await lowLimitBridge.getAddress(), true);
+
+      // Register bridge
+      await gateway.registerBridgedToken(await lowLimitBridge.getAddress());
+
+      // Mint USDT to user (more than limit)
+      const usdtAmount = 200_000000n; // 200 USDT (6 decimals) = 200 JUSD > 100 limit
+      await usdt.mint(user1.address, usdtAmount);
+      await usdt.connect(user1).approve(await gateway.getAddress(), usdtAmount);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      // Should fail due to LimitExceeded
+      await expect(
+        gateway
+          .connect(user1)
+          .swapExactTokensForTokens(
+            await usdt.getAddress(),
+            await wcbtc.getAddress(),
+            3000,
+            usdtAmount,
+            0,
+            user1.address,
+            deadline
+          )
+      ).to.be.revertedWithCustomError(lowLimitBridge, "LimitExceeded");
+    });
+
+    it("Should revert when bridge is expired", async function () {
+      const { gateway, owner, user1, jusd, wcbtc, swapRouter } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      // Deploy a bridged token with very short expiry
+      const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+      const usdt = (await MockERC20Factory.deploy("Tether USD", "USDT", 6)) as unknown as MockERC20;
+
+      const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+      const expiringBridge = await MockBridgeFactory.deploy(
+        await usdt.getAddress(),
+        await jusd.getAddress(),
+        ethers.parseEther("1000000"),
+        1 // 1 week expiry
+      );
+
+      // Setup JUSD to accept bridge as minter
+      await jusd.setMinter(await expiringBridge.getAddress(), true);
+
+      // Register bridge
+      await gateway.registerBridgedToken(await expiringBridge.getAddress());
+
+      // Mint USDT to user
+      const usdtAmount = 100_000000n; // 100 USDT
+      await usdt.mint(user1.address, usdtAmount);
+      await usdt.connect(user1).approve(await gateway.getAddress(), usdtAmount);
+
+      // Fast forward past expiry (2 weeks)
+      await time.increase(2 * 7 * 24 * 60 * 60);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      // Should fail due to Expired
+      await expect(
+        gateway
+          .connect(user1)
+          .swapExactTokensForTokens(
+            await usdt.getAddress(),
+            await wcbtc.getAddress(),
+            3000,
+            usdtAmount,
+            0,
+            user1.address,
+            deadline
+          )
+      ).to.be.revertedWithCustomError(expiringBridge, "Expired");
+    });
+  });
+
+  describe("View Function Edge Cases", function () {
+    it("Should return correct values for jusdToSvJusd with zero amount", async function () {
+      const { gateway } = await loadFixture(deployGatewayFixture);
+
+      const result = await gateway.jusdToSvJusd(0);
+      expect(result).to.equal(0);
+    });
+
+    it("Should return correct values for svJusdToJusd with zero amount", async function () {
+      const { gateway } = await loadFixture(deployGatewayFixture);
+
+      const result = await gateway.svJusdToJusd(0);
+      expect(result).to.equal(0);
+    });
+
+    it("Should return correct values for juiceToJusd with zero amount", async function () {
+      const { gateway } = await loadFixture(deployGatewayFixture);
+
+      // calculateProceeds(0) returns 0 automatically
+      const result = await gateway.juiceToJusd(0);
+      expect(result).to.equal(0);
+    });
+
+    it("Should return false for isBridgedToken with non-bridged token", async function () {
+      const { gateway, wcbtc } = await loadFixture(deployGatewayFixture);
+
+      const result = await gateway.isBridgedToken(await wcbtc.getAddress());
+      expect(result).to.be.false;
+    });
+
+    it("Should return empty array for getBridgedTokens when none registered", async function () {
+      const { gateway } = await loadFixture(deployGatewayFixture);
+
+      const result = await gateway.getBridgedTokens();
+      expect(result).to.deep.equal([]);
+    });
+  });
+
+  describe("Sequential Operations", function () {
+    it("Should handle add -> increase -> partial remove -> increase -> full remove", async function () {
+      const { gateway, owner, user1, jusd, wcbtc, svJusd, positionManager } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET * 10; // Long deadline
+      const jusdAmount = ethers.parseEther("100");
+      const wcbtcAmount = ethers.parseEther("1");
+
+      // Step 1: Add liquidity
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const svJusdShares = await svJusd.convertToShares(jusdAmount);
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr ? [svJusdShares, wcbtcAmount] : [wcbtcAmount, svJusdShares];
+
+      await positionManager.setMintResult(1, 1000, amount0, amount1);
+      await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount * 5n);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount * 5n);
+
+      await gateway
+        .connect(user1)
+        .addLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          0,
+          0,
+          jusdAmount,
+          wcbtcAmount,
+          0,
+          0,
+          user1.address,
+          deadline
+        );
+
+      // NFT (tokenId=1) is already minted to user1 by addLiquidity
+      const posManagerAddr = await positionManager.getAddress();
+      const gatewayAddr = await gateway.getAddress();
+
+      // Approve gateway to transfer NFT for all increase/remove operations
+      await positionManager.connect(user1).setApprovalForAll(gatewayAddr, true);
+
+      // Step 2: Increase liquidity
+      await positionManager.setIncreaseResult(500, amount0 / 2n, amount1 / 2n);
+
+      await gateway
+        .connect(user1)
+        .increaseLiquidity(
+          1,
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          jusdAmount / 2n,
+          wcbtcAmount / 2n,
+          0,
+          0,
+          deadline
+        );
+
+      // Step 3: Partial remove (500 of 1500 liquidity)
+      await positionManager.setDecreaseResult(amount0 / 3n, amount1 / 3n);
+
+      // Fund position manager for returns
+      await jusd.mint(owner.address, jusdAmount);
+      await jusd.connect(owner).approve(await svJusd.getAddress(), jusdAmount);
+      await svJusd.connect(owner).deposit(jusdAmount, posManagerAddr);
+      await wcbtc.deposit({ value: wcbtcAmount });
+      await wcbtc.transfer(posManagerAddr, wcbtcAmount);
+
+      await gateway
+        .connect(user1)
+        .removeLiquidity(1, 500, await jusd.getAddress(), await wcbtc.getAddress(), 0, 0, user1.address, deadline);
+
+      // Step 4: Increase again
+      await positionManager.setIncreaseResult(300, amount0 / 4n, amount1 / 4n);
+
+      await gateway
+        .connect(user1)
+        .increaseLiquidity(
+          1,
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          jusdAmount / 4n,
+          wcbtcAmount / 4n,
+          0,
+          0,
+          deadline
+        );
+
+      // Step 5: Full remove (liquidityToRemove = 0 means all)
+      await positionManager.setDecreaseResult(amount0, amount1);
+
+      // Fund more for full removal
+      await jusd.mint(owner.address, jusdAmount * 2n);
+      await jusd.connect(owner).approve(await svJusd.getAddress(), jusdAmount * 2n);
+      await svJusd.connect(owner).deposit(jusdAmount * 2n, posManagerAddr);
+      await wcbtc.deposit({ value: wcbtcAmount * 2n });
+      await wcbtc.transfer(posManagerAddr, wcbtcAmount * 2n);
+
+      const tx = await gateway.connect(user1).removeLiquidity(
+        1,
+        0, // Remove all
+        await jusd.getAddress(),
+        await wcbtc.getAddress(),
+        0,
+        0,
+        user1.address,
+        deadline
+      );
+
+      await expect(tx).to.emit(gateway, "LiquidityRemoved");
+    });
+  });
 });
