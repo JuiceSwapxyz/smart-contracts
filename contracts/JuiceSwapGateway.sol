@@ -199,7 +199,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     error BridgedTokenAlreadyExists(address token);
     error BridgedTokenNotFound(address token);
     error InvalidBridgeConfig();
-    error NotApprovedMinter(address bridge);
+    error BridgeNotApprovedMinter(address bridge);
+    error BridgeStopped(address bridge);
     error InvalidPrice();
 
     /**
@@ -697,8 +698,13 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         string memory mintReason = "";
         uint256 mintCapacity = 0;
 
+        // Check if bridge is stopped (emergency governance action)
+        if (bridge.stopped()) {
+            canMint = false;
+            mintReason = "Bridge stopped";
+        }
         // Check if bridge is expired
-        if (block.timestamp > bridge.horizon()) {
+        else if (block.timestamp > bridge.horizon()) {
             canMint = false;
             mintReason = "Bridge expired";
         }
@@ -983,14 +989,14 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
             return jusdAmount;
         } else if (tokenOut == address(JUICE)) {
             // JUSD -> JUICE via Equity.invest()
-            SafeERC20.forceApprove(JUSD, address(JUICE), jusdAmount);
+            // Note: JUSD already approved to JUICE in constructor
             uint256 juiceAmount = JUICE.invest(jusdAmount, 0);
             SafeERC20.safeTransfer(IERC20(address(JUICE)), to, juiceAmount);
             return juiceAmount;
         } else {
             // JUSD -> Bridged token via bridge.burnAndSend()
+            // Note: JUSD already approved to bridge in registerBridgedToken()
             BridgeConfig storage configOut = bridgeConfigs[tokenOut];
-            SafeERC20.forceApprove(JUSD, address(configOut.bridge), jusdAmount);
             configOut.bridge.burnAndSend(to, jusdAmount);
             return _jusdToBridgedAmount(jusdAmount, configOut.decimals);
         }
@@ -1314,7 +1320,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
 
         // Critical: Bridge must be approved JUSD minter (via JUSD governance veto system)
         // This ensures only governance-approved bridges can be registered
-        if (!IJuiceDollar(address(JUSD)).isMinter(bridge)) revert NotApprovedMinter(bridge);
+        if (!IJuiceDollar(address(JUSD)).isMinter(bridge)) revert BridgeNotApprovedMinter(bridge);
+
+        // Check if bridge is stopped (emergency governance action)
+        if (bridgeContract.stopped()) revert BridgeStopped(bridge);
 
         uint8 decimals = IERC20Metadata(token).decimals();
         bridgeConfigs[token] = BridgeConfig({bridge: IStablecoinBridge(bridge), decimals: decimals});
