@@ -413,6 +413,127 @@ describe("JuiceSwapGateway", function () {
         )
       ).to.emit(gateway, "SwapExecuted");
     });
+
+    it("Should revert JUICE swap if minAmountOut not met", async function () {
+      const { gateway, user1, juice, jusd, wcbtc, swapRouter } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const swapAmount = ethers.parseEther("1"); // 1 JUICE
+      const expectedJusd = ethers.parseEther("100");
+      const actualWcbtc = ethers.parseEther("0.5");
+      const unreasonableMinOut = ethers.parseEther("100"); // Way more than we'll get
+
+      await jusd.mint(await juice.getAddress(), expectedJusd);
+      await swapRouter.setSwapOutput(actualWcbtc);
+      await juice.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+      await expect(
+        gateway.connect(user1).swapExactTokensForTokens(
+          await juice.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          swapAmount,
+          unreasonableMinOut,
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "InsufficientOutput");
+    });
+
+    it("Should revert if JUICE allowance insufficient", async function () {
+      const { gateway, user1, juice, jusd, wcbtc, swapRouter } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const swapAmount = ethers.parseEther("1");
+      const expectedJusd = ethers.parseEther("100");
+
+      await jusd.mint(await juice.getAddress(), expectedJusd);
+      await swapRouter.setSwapOutput(ethers.parseEther("0.5"));
+      // NO approval given
+
+      await expect(
+        gateway.connect(user1).swapExactTokensForTokens(
+          await juice.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          swapAmount,
+          0,
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(juice, "ERC20InsufficientAllowance");
+    });
+
+    it("Should add liquidity with JUICE as input token", async function () {
+      const { gateway, user1, juice, jusd, svJusd, wcbtc, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const juiceAmount = ethers.parseEther("1"); // 1 JUICE
+      const expectedJusd = ethers.parseEther("100"); // 1 JUICE = 100 JUSD
+      const wcbtcAmount = ethers.parseEther("1");
+
+      // Fund the JUICE contract with JUSD for redemption
+      await jusd.mint(await juice.getAddress(), expectedJusd);
+
+      await juice.connect(user1).approve(await gateway.getAddress(), juiceAmount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
+
+      // Should succeed - JUICE is converted via redeemFrom to JUSD, then to svJUSD
+      await expect(
+        gateway.connect(user1).addLiquidity(
+          await juice.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          juiceAmount,
+          wcbtcAmount,
+          0,
+          0,
+          user1.address,
+          deadline
+        )
+      ).to.emit(gateway, "LiquidityAdded");
+    });
+
+    it("Should return excess as JUSD when adding liquidity with JUICE", async function () {
+      const { gateway, user1, juice, jusd, svJusd, wcbtc, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const juiceAmount = ethers.parseEther("2"); // 2 JUICE (more than needed)
+      const expectedJusd = ethers.parseEther("200"); // 2 JUICE = 200 JUSD
+      const wcbtcAmount = ethers.parseEther("1");
+
+      // Fund the JUICE contract with JUSD for redemption
+      await jusd.mint(await juice.getAddress(), expectedJusd);
+
+      // Mock position manager to only use half the svJUSD (100 JUSD worth)
+      const halfSvJusd = await svJusd.convertToShares(ethers.parseEther("100"));
+      await positionManager.setMintResult(1, 100, halfSvJusd, wcbtcAmount);
+
+      await juice.connect(user1).approve(await gateway.getAddress(), juiceAmount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
+
+      const jusdBefore = await jusd.balanceOf(user1.address);
+
+      await gateway.connect(user1).addLiquidity(
+        await juice.getAddress(),
+        await wcbtc.getAddress(),
+        3000,
+        juiceAmount,
+        wcbtcAmount,
+        0,
+        0,
+        user1.address,
+        deadline
+      );
+
+      const jusdAfter = await jusd.balanceOf(user1.address);
+      // User should receive excess as JUSD (not JUICE, due to flash loan protection)
+      expect(jusdAfter).to.be.gt(jusdBefore);
+    });
   });
 
   describe("Swap: Native cBTC", function () {

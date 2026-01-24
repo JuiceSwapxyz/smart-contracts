@@ -891,6 +891,11 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         if (userToken == address(JUSD)) {
             return _jusdToSvJusdAmount(minAmount);
         }
+        if (userToken == address(JUICE)) {
+            // Convert JUICE amount to JUSD equivalent, then to svJUSD
+            uint256 jusdEquivalent = JUICE.calculateProceeds(minAmount);
+            return _jusdToSvJusdAmount(jusdEquivalent);
+        }
         // Check if token is a bridged stablecoin
         BridgeConfig storage config = bridgeConfigs[userToken];
         if (address(config.bridge) != address(0)) {
@@ -905,6 +910,11 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     function _toUserAmount(address userToken, uint256 actualAmount) internal view returns (uint256) {
         if (userToken == address(JUSD)) {
             return _svJusdToJusdAmount(actualAmount);
+        }
+        if (userToken == address(JUICE)) {
+            // Convert svJUSD to JUSD equivalent, then estimate JUICE
+            uint256 jusdAmount = _svJusdToJusdAmount(actualAmount);
+            return JUICE.calculateShares(jusdAmount);
         }
         // Check if token is a bridged stablecoin
         BridgeConfig storage config = bridgeConfigs[userToken];
