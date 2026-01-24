@@ -511,7 +511,14 @@ describe("JuiceSwapGateway", function () {
 
       // Mock position manager to only use half the svJUSD (100 JUSD worth)
       const halfSvJusd = await svJusd.convertToShares(ethers.parseEther("100"));
-      await positionManager.setMintResult(1, 100, halfSvJusd, wcbtcAmount);
+
+      // Token ordering: Uniswap V3 requires token0 < token1
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr
+        ? [halfSvJusd, wcbtcAmount]
+        : [wcbtcAmount, halfSvJusd];
+      await positionManager.setMintResult(1, 100, amount0, amount1);
 
       await juice.connect(user1).approve(await gateway.getAddress(), juiceAmount);
       await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
@@ -1381,7 +1388,12 @@ describe("JuiceSwapGateway", function () {
 
       const svJusdAddr = await svJusd.getAddress();
       const wcbtcAddr = await wcbtc.getAddress();
-      await positionManager.setPositionData(tokenId, svJusdAddr, wcbtcAddr, 100);
+
+      // Token ordering: Uniswap V3 requires token0 < token1
+      const [token0, token1] = svJusdAddr < wcbtcAddr
+        ? [svJusdAddr, wcbtcAddr]
+        : [wcbtcAddr, svJusdAddr];
+      await positionManager.setPositionData(tokenId, token0, token1, 100);
       await positionManager.mintNFT(user1.address, tokenId);
       await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
 

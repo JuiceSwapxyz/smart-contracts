@@ -19,6 +19,7 @@ interface IMintableERC20 {
  */
 contract MockSwapRouter {
     uint256 private _outputAmount;
+    uint256 public swapCallCount;
 
     struct ExactInputSingleParams {
         address tokenIn;
@@ -48,6 +49,9 @@ contract MockSwapRouter {
         payable
         returns (uint256 amountOut)
     {
+        // Track call count for testing
+        swapCallCount++;
+
         // Pull input tokens from caller (simulates pool callback behavior)
         IERC20(params.tokenIn).transferFrom(msg.sender, address(this), params.amountIn);
 
