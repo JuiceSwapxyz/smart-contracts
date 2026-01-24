@@ -60,6 +60,14 @@ contract MockPositionManager is ERC721 {
     bool private _failNextSafeTransfer;
     string private _safeTransferFailReason;
 
+    // For testing mint/increase/decrease failures
+    bool private _failNextMint;
+    string private _mintFailReason;
+    bool private _failNextIncrease;
+    string private _increaseFailReason;
+    bool private _failNextDecrease;
+    string private _decreaseFailReason;
+
     constructor() ERC721("Mock Position", "MPOS") {
         _factory = new MockFactory();
     }
@@ -74,6 +82,12 @@ contract MockPositionManager is ERC721 {
     function mint(
         MintParams calldata params
     ) external payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1) {
+        // Check for failure simulation
+        if (_failNextMint) {
+            _failNextMint = false;
+            revert(_mintFailReason);
+        }
+
         // Use preset values if available, otherwise calculate
         tokenId = _mockTokenId > 0 ? _mockTokenId : _nextTokenId++;
         liquidity = _mockLiquidity > 0 ? _mockLiquidity : 100;
@@ -127,6 +141,12 @@ contract MockPositionManager is ERC721 {
     function increaseLiquidity(
         IncreaseLiquidityParams calldata params
     ) external payable returns (uint128 liquidity, uint256 amount0, uint256 amount1) {
+        // Check for failure simulation
+        if (_failNextIncrease) {
+            _failNextIncrease = false;
+            revert(_increaseFailReason);
+        }
+
         require(ownerOf(params.tokenId) == msg.sender || getApproved(params.tokenId) == msg.sender, "Not authorized");
 
         // Use preset values if available, otherwise use desired amounts
@@ -156,6 +176,12 @@ contract MockPositionManager is ERC721 {
     function decreaseLiquidity(
         DecreaseLiquidityParams calldata params
     ) external payable returns (uint256 amount0, uint256 amount1) {
+        // Check for failure simulation
+        if (_failNextDecrease) {
+            _failNextDecrease = false;
+            revert(_decreaseFailReason);
+        }
+
         require(ownerOf(params.tokenId) == msg.sender || getApproved(params.tokenId) == msg.sender, "Not authorized");
 
         Position storage pos = _positions[params.tokenId];
@@ -367,6 +393,32 @@ contract MockPositionManager is ERC721 {
      */
     function getPositionLiquidity(uint256 tokenId) external view returns (uint128) {
         return _positions[tokenId].liquidity;
+    }
+
+    // ========== Mint/Increase/Decrease Failure Simulation ==========
+
+    /**
+     * @notice Test helper to simulate mint failure
+     */
+    function setFailNextMint(bool fail, string calldata reason) external {
+        _failNextMint = fail;
+        _mintFailReason = reason;
+    }
+
+    /**
+     * @notice Test helper to simulate increaseLiquidity failure
+     */
+    function setFailNextIncrease(bool fail, string calldata reason) external {
+        _failNextIncrease = fail;
+        _increaseFailReason = reason;
+    }
+
+    /**
+     * @notice Test helper to simulate decreaseLiquidity failure
+     */
+    function setFailNextDecrease(bool fail, string calldata reason) external {
+        _failNextDecrease = fail;
+        _decreaseFailReason = reason;
     }
 
     receive() external payable {}
