@@ -56,6 +56,10 @@ contract MockPositionManager is ERC721 {
     uint256 private _poolCounter = 1;
     address private _nextPoolAddress;
 
+    // For testing NFT transfer failures
+    bool private _failNextSafeTransfer;
+    string private _safeTransferFailReason;
+
     constructor() ERC721("Mock Position", "MPOS") {
         _factory = new MockFactory();
     }
@@ -326,6 +330,43 @@ contract MockPositionManager is ERC721 {
     function setPool(address tokenA, address tokenB, uint24 fee, address pool) external {
         (address t0, address t1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
         _pools[keccak256(abi.encodePacked(t0, t1, fee))] = pool;
+    }
+
+    // ========== NFT Transfer Failure Simulation ==========
+
+    /**
+     * @notice Test helper to simulate NFT transfer failure
+     * @param fail Whether the next safeTransferFrom should fail
+     * @param reason The revert reason if fail is true
+     */
+    function setFailSafeTransfer(bool fail, string calldata reason) external {
+        _failNextSafeTransfer = fail;
+        _safeTransferFailReason = reason;
+    }
+
+    /**
+     * @notice Override safeTransferFrom to allow failure simulation
+     */
+    function safeTransferFrom(address from, address to, uint256 tokenId, bytes memory data) public virtual override {
+        if (_failNextSafeTransfer) {
+            _failNextSafeTransfer = false;
+            revert(_safeTransferFailReason);
+        }
+        super.safeTransferFrom(from, to, tokenId, data);
+    }
+
+    /**
+     * @notice Test helper to burn an NFT (for testing non-existent token scenarios)
+     */
+    function burnNFT(uint256 tokenId) external {
+        _burn(tokenId);
+    }
+
+    /**
+     * @notice Test helper to get position liquidity directly
+     */
+    function getPositionLiquidity(uint256 tokenId) external view returns (uint128) {
+        return _positions[tokenId].liquidity;
     }
 
     receive() external payable {}
