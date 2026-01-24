@@ -108,7 +108,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
           return {
             amountA: parsed.args.amountA,
             amountB: parsed.args.amountB,
-            liquidity: parsed.args.liquidity
+            liquidity: parsed.args.liquidity,
           };
         }
       } catch {
@@ -195,7 +195,9 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
       const jusdSpent = jusdBefore - jusdAfter;
       const wcbtcReceived = wcbtcAfter - wcbtcBefore;
-      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD, Received: ${ethers.formatUnits(wcbtcReceived, 18)} WcBTC`);
+      console.log(
+        `    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD, Received: ${ethers.formatUnits(wcbtcReceived, 18)} WcBTC`
+      );
 
       expect(receipt.status).to.equal(1);
 
@@ -238,7 +240,9 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdAfter = await jusd.balanceOf(signerAddress);
       const wcbtcSpent = wcbtcBefore - wcbtcAfter;
       const jusdReceived = jusdAfter - jusdBefore;
-      console.log(`    Spent: ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC, Received: ${ethers.formatUnits(jusdReceived, 6)} JUSD`);
+      console.log(
+        `    Spent: ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC, Received: ${ethers.formatUnits(jusdReceived, 6)} JUSD`
+      );
 
       expect(receipt.status).to.equal(1);
 
@@ -319,7 +323,9 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const juiceAfter = await juice.balanceOf(signerAddress);
       const wcbtcSpent = wcbtcBefore - wcbtcAfter;
       const juiceReceived = juiceAfter - juiceBefore;
-      console.log(`    Spent: ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC, Received: ${ethers.formatUnits(juiceReceived, 18)} JUICE`);
+      console.log(
+        `    Spent: ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC, Received: ${ethers.formatUnits(juiceReceived, 18)} JUICE`
+      );
 
       expect(receipt.status).to.equal(1);
 
@@ -397,11 +403,15 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdBefore = await jusd.balanceOf(signerAddress);
       const wcbtcBefore = await wcbtc.balanceOf(signerAddress);
 
-      console.log(`    Adding liquidity: ${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(wcbtcAmount, 18)} WcBTC...`);
+      console.log(
+        `    Adding liquidity: ${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(wcbtcAmount, 18)} WcBTC...`
+      );
       const tx = await gateway.addLiquidity(
         ADDRESSES.JUSD,
         ADDRESSES.WcBTC,
         FEE,
+        0, // tickLower (full range)
+        0, // tickUpper (full range)
         jusdAmount,
         wcbtcAmount,
         0,
@@ -463,7 +473,9 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdBefore = await jusd.balanceOf(signerAddress);
       const wcbtcBefore = await wcbtc.balanceOf(signerAddress);
 
-      console.log(`    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(wcbtcAmount, 18)} WcBTC...`);
+      console.log(
+        `    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(wcbtcAmount, 18)} WcBTC...`
+      );
       const tx = await gateway.increaseLiquidity(
         positionTokenId,
         ADDRESSES.JUSD,
@@ -481,7 +493,9 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const eventData = findLiquidityIncreasedEvent(receipt);
       expect(eventData).to.not.be.null;
       console.log(`    Liquidity added: ${eventData!.liquidity}`);
-      console.log(`    Event amounts: ${ethers.formatUnits(eventData!.amountA, 6)} JUSD, ${ethers.formatUnits(eventData!.amountB, 18)} WcBTC`);
+      console.log(
+        `    Event amounts: ${ethers.formatUnits(eventData!.amountA, 6)} JUSD, ${ethers.formatUnits(eventData!.amountB, 18)} WcBTC`
+      );
 
       // Verify NFT returned to user
       const owner = await positionManager.ownerOf(positionTokenId);
@@ -505,9 +519,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       expect(eventData!.amountB).to.equal(wcbtcSpent);
       // JUSD: close match (small variance due to svJUSD exchange rate conversions)
       // Allow 1% tolerance for the JUSD→svJUSD→JUSD round-trip
-      const jusdDiff = eventData!.amountA > jusdSpent
-        ? eventData!.amountA - jusdSpent
-        : jusdSpent - eventData!.amountA;
+      const jusdDiff = eventData!.amountA > jusdSpent ? eventData!.amountA - jusdSpent : jusdSpent - eventData!.amountA;
       const tolerance = jusdSpent / 100n; // 1%
       expect(jusdDiff).to.be.lte(tolerance);
     });
@@ -562,7 +574,9 @@ const isIntegrationTest = network.name === "citreaTestnet";
       // Verify tokens received (check each individually since they have different decimals)
       const jusdAfter = await jusd.balanceOf(signerAddress);
       const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
-      console.log(`    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 6)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 18)} WcBTC`);
+      console.log(
+        `    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 6)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 18)} WcBTC`
+      );
       expect(jusdAfter).to.be.gt(jusdBefore);
       expect(wcbtcAfter).to.be.gt(wcbtcBefore);
     });
@@ -609,7 +623,9 @@ const isIntegrationTest = network.name === "citreaTestnet";
       // Verify tokens received (check each individually since they have different decimals)
       const jusdAfter = await jusd.balanceOf(signerAddress);
       const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
-      console.log(`    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 6)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 18)} WcBTC`);
+      console.log(
+        `    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 6)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 18)} WcBTC`
+      );
       expect(jusdAfter).to.be.gt(jusdBefore);
       expect(wcbtcAfter).to.be.gt(wcbtcBefore);
     });
@@ -635,11 +651,15 @@ const isIntegrationTest = network.name === "citreaTestnet";
 
       const jusdBefore = await jusd.balanceOf(signerAddress);
 
-      console.log(`    Adding liquidity: ${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(cbtcAmount, 18)} native cBTC...`);
+      console.log(
+        `    Adding liquidity: ${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(cbtcAmount, 18)} native cBTC...`
+      );
       const tx = await gateway.addLiquidity(
         ADDRESSES.JUSD,
         ethers.ZeroAddress, // native cBTC
         FEE,
+        0, // tickLower (full range)
+        0, // tickUpper (full range)
         jusdAmount,
         cbtcAmount,
         0,
@@ -698,7 +718,9 @@ const isIntegrationTest = network.name === "citreaTestnet";
 
       const jusdBefore = await jusd.balanceOf(signerAddress);
 
-      console.log(`    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(cbtcAmount, 18)} native cBTC...`);
+      console.log(
+        `    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(cbtcAmount, 18)} native cBTC...`
+      );
       const tx = await gateway.increaseLiquidity(
         positionTokenId,
         ADDRESSES.JUSD,
@@ -717,7 +739,9 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const eventData = findLiquidityIncreasedEvent(receipt);
       expect(eventData).to.not.be.null;
       console.log(`    Liquidity added: ${eventData!.liquidity}`);
-      console.log(`    Event amounts: ${ethers.formatUnits(eventData!.amountA, 6)} JUSD, ${ethers.formatUnits(eventData!.amountB, 18)} cBTC`);
+      console.log(
+        `    Event amounts: ${ethers.formatUnits(eventData!.amountA, 6)} JUSD, ${ethers.formatUnits(eventData!.amountB, 18)} cBTC`
+      );
 
       // Verify NFT returned to user
       const owner = await positionManager.ownerOf(positionTokenId);
@@ -735,9 +759,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
 
       // Verify event amounts
       // JUSD: close match (small variance due to svJUSD exchange rate conversions)
-      const jusdDiff = eventData!.amountA > jusdSpent
-        ? eventData!.amountA - jusdSpent
-        : jusdSpent - eventData!.amountA;
+      const jusdDiff = eventData!.amountA > jusdSpent ? eventData!.amountA - jusdSpent : jusdSpent - eventData!.amountA;
       const tolerance = jusdSpent / 100n; // 1%
       expect(jusdDiff).to.be.lte(tolerance);
       // Native cBTC: verify it's non-zero and at most what was sent (can't verify exact due to gas)
@@ -783,7 +805,9 @@ const isIntegrationTest = network.name === "citreaTestnet";
       expect(removedEvent!.amountA).to.be.gt(0); // JUSD amount
       expect(removedEvent!.amountB).to.be.gt(0); // cBTC amount (proves gateway processed the WcBTC)
 
-      console.log(`    Event amounts: ${ethers.formatUnits(removedEvent!.amountA, 6)} JUSD, ${ethers.formatUnits(removedEvent!.amountB, 18)} cBTC`);
+      console.log(
+        `    Event amounts: ${ethers.formatUnits(removedEvent!.amountA, 6)} JUSD, ${ethers.formatUnits(removedEvent!.amountB, 18)} cBTC`
+      );
 
       // Verify all liquidity was removed from position
       const liquidityAfter = await getPositionLiquidity(positionTokenId);

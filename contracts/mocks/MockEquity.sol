@@ -83,6 +83,28 @@ contract MockEquity is ERC20 {
     }
 
     /**
+     * @notice Redeem JUICE on behalf of owner
+     * @param owner Address whose JUICE to redeem
+     * @param target Address to send JUSD to
+     * @param shares Amount of JUICE to redeem
+     * @param expectedProceeds Minimum proceeds expected (ignored in mock)
+     * @return proceeds Amount of JUSD returned
+     */
+    function redeemFrom(address owner, address target, uint256 shares, uint256 expectedProceeds) external returns (uint256 proceeds) {
+        expectedProceeds; // Silence unused variable warning
+
+        // Transfer JUICE from owner to this contract (requires allowance)
+        transferFrom(owner, address(this), shares);
+        _burn(address(this), shares);
+
+        // Calculate proceeds: shares * PRICE
+        proceeds = (shares * PRICE) / 1e18;
+        JUSD.transfer(target, proceeds);
+
+        return proceeds;
+    }
+
+    /**
      * @notice Calculate JUSD received when redeeming JUICE
      * @param shares Amount of JUICE to redeem
      * @return proceeds Amount of JUSD that would be received

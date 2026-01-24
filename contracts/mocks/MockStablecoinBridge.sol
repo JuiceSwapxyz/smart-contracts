@@ -28,9 +28,9 @@ contract MockStablecoinBridge {
     uint256 public minted;
     bool public stopped;
 
-    error Stopped();
     error Expired();
     error LimitExceeded();
+    error Stopped();
 
     constructor(address _usd, address _jusd, uint256 _limit, uint256 _weeks) {
         usd = IERC20(_usd);
