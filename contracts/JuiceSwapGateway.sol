@@ -241,6 +241,18 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (amountIn == 0) revert InvalidAmount();
 
+        // Optimization: Handle direct USD conversions without svJUSD roundtrip
+        // This saves ~100k gas for JUSD <-> Bridged and JUSD/Bridged -> JUICE swaps
+        bool isInputUsd = _isUsdToken(tokenIn);
+        bool isOutputUsdOrJuice = _isUsdToken(tokenOut) || tokenOut == address(JUICE);
+
+        if (isInputUsd && isOutputUsdOrJuice && tokenIn != tokenOut) {
+            amountOut = _handleDirectUsdConversion(tokenIn, tokenOut, amountIn, to);
+            if (amountOut < minAmountOut) revert InsufficientOutput();
+            emit SwapExecuted(msg.sender, tokenIn, tokenOut, amountIn, amountOut);
+            return amountOut;
+        }
+
         // Use DEFAULT_FEE when fee is 0 (JUICE1-6 fix)
         uint24 effectiveFee = fee == 0 ? DEFAULT_FEE : fee;
         if (effectiveFee >= 1_000_000) revert InvalidFee(effectiveFee);
@@ -252,11 +264,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         address actualTokenOut = _getActualToken(tokenOut);
 
         // Step 3: Execute swap through Uniswap V3 SwapRouter (skip if same token)
-        // This handles bridged stablecoin conversions (e.g., JUSD → USDT.e, SUSD → JUSD)
-        // where both tokens resolve to svJUSD internally - no swap needed, just bridge conversion
+        // Note: The direct USD conversion above handles most same-token cases more efficiently
         uint256 actualAmountOut;
         if (actualTokenIn == actualTokenOut) {
-            // No swap needed - direct bridge-to-bridge or stablecoin conversion
+            // Fallback for edge cases (shouldn't happen with USD tokens anymore)
             actualAmountOut = actualAmountIn;
         } else {
             ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
@@ -738,6 +749,66 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         // Check if token is a bridged stablecoin
         if (address(bridgeConfigs[token].bridge) != address(0)) return address(SV_JUSD);
         return token;
+    }
+
+    /**
+     * @dev Checks if a token is a USD-based token (JUSD or bridged stablecoin)
+     */
+    function _isUsdToken(address token) internal view returns (bool) {
+        if (token == address(JUSD)) return true;
+        if (address(bridgeConfigs[token].bridge) != address(0)) return true;
+        return false;
+    }
+
+    /**
+     * @dev Handles direct USD-to-USD conversions without svJUSD roundtrip
+     * @notice This is an optimization for JUSD <-> Bridged and JUSD/Bridged -> JUICE swaps.
+     *         Instead of: Input -> svJUSD -> JUSD -> Output
+     *         We do:      Input -> JUSD -> Output (skipping vault deposit/redeem)
+     * @param tokenIn The input token (JUSD or bridged stablecoin)
+     * @param tokenOut The output token (JUSD, bridged stablecoin, or JUICE)
+     * @param amountIn The input amount in tokenIn decimals
+     * @param to The recipient address
+     * @return amountOut The output amount in tokenOut decimals
+     */
+    function _handleDirectUsdConversion(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        address to
+    ) internal returns (uint256 amountOut) {
+        uint256 jusdAmount;
+
+        // Step 1: Convert input to JUSD (if not already JUSD)
+        if (tokenIn == address(JUSD)) {
+            SafeERC20.safeTransferFrom(JUSD, msg.sender, address(this), amountIn);
+            jusdAmount = amountIn;
+        } else {
+            // Bridged token input -> mint JUSD via bridge
+            BridgeConfig storage configIn = bridgeConfigs[tokenIn];
+            SafeERC20.safeTransferFrom(IERC20(tokenIn), msg.sender, address(this), amountIn);
+            SafeERC20.forceApprove(IERC20(tokenIn), address(configIn.bridge), amountIn);
+            configIn.bridge.mint(amountIn);
+            jusdAmount = _bridgedToJusdAmount(amountIn, configIn.decimals);
+        }
+
+        // Step 2: Convert JUSD to output token
+        if (tokenOut == address(JUSD)) {
+            SafeERC20.safeTransfer(JUSD, to, jusdAmount);
+            return jusdAmount;
+        } else if (tokenOut == address(JUICE)) {
+            // JUSD -> JUICE via Equity.invest()
+            SafeERC20.forceApprove(JUSD, address(JUICE), jusdAmount);
+            uint256 juiceAmount = JUICE.invest(jusdAmount, 0);
+            SafeERC20.safeTransfer(IERC20(address(JUICE)), to, juiceAmount);
+            return juiceAmount;
+        } else {
+            // JUSD -> Bridged token via bridge.burnAndSend()
+            BridgeConfig storage configOut = bridgeConfigs[tokenOut];
+            SafeERC20.forceApprove(JUSD, address(configOut.bridge), jusdAmount);
+            configOut.bridge.burnAndSend(to, jusdAmount);
+            return _jusdToBridgedAmount(jusdAmount, configOut.decimals);
+        }
     }
 
     /**

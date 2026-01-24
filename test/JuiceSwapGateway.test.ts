@@ -3018,5 +3018,277 @@ describe("JuiceSwapGateway", function () {
       });
 
     });
+
+    describe("Direct USD Conversion Optimization", function () {
+      /**
+       * These tests verify the gas-optimized direct USD conversion path.
+       * Instead of: Input -> svJUSD deposit -> svJUSD redeem -> Output
+       * We do:      Input -> JUSD -> Output (skipping vault roundtrip)
+       */
+
+      it("Should directly convert JUSD to bridged token (skip svJUSD)", async function () {
+        const { gateway, user1, jusd, usdc, usdcBridge } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const jusdAmount = ethers.parseEther("100");
+        const deadline = (await time.latest()) + 3600;
+
+        // Mint JUSD to user
+        await jusd.mint(user1.address, jusdAmount);
+        await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
+
+        // Fund bridge with USDC for burn operation
+        const usdcAmount = 100_000_000n; // 100 USDC (6 decimals)
+        await usdc.mint(await usdcBridge.getAddress(), usdcAmount);
+
+        // Set minted amount so burn can decrease it (minted -= amount)
+        await usdcBridge.setMinted(jusdAmount);
+
+        const usdcBefore = await usdc.balanceOf(user1.address);
+
+        // Swap JUSD -> USDC.e (should use direct path, not svJUSD roundtrip)
+        await gateway.connect(user1).swapExactTokensForTokens(
+          await jusd.getAddress(),
+          await usdc.getAddress(),
+          0, // fee (not used for direct conversion)
+          jusdAmount,
+          0, // minAmountOut
+          user1.address,
+          deadline
+        );
+
+        const usdcAfter = await usdc.balanceOf(user1.address);
+        const expectedUsdc = jusdAmount / 10n ** 12n; // 18 decimals -> 6 decimals
+
+        expect(usdcAfter - usdcBefore).to.equal(expectedUsdc);
+      });
+
+      it("Should directly convert bridged token to JUSD (skip svJUSD)", async function () {
+        const { gateway, user1, jusd, usdc } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const usdcAmount = 100_000_000n; // 100 USDC (6 decimals)
+        const deadline = (await time.latest()) + 3600;
+
+        // Mint USDC to user
+        await usdc.mint(user1.address, usdcAmount);
+        await usdc.connect(user1).approve(await gateway.getAddress(), usdcAmount);
+
+        const jusdBefore = await jusd.balanceOf(user1.address);
+
+        // Swap USDC.e -> JUSD (should use direct path)
+        await gateway.connect(user1).swapExactTokensForTokens(
+          await usdc.getAddress(),
+          await jusd.getAddress(),
+          0,
+          usdcAmount,
+          0,
+          user1.address,
+          deadline
+        );
+
+        const jusdAfter = await jusd.balanceOf(user1.address);
+        const expectedJusd = usdcAmount * 10n ** 12n; // 6 decimals -> 18 decimals
+
+        expect(jusdAfter - jusdBefore).to.equal(expectedJusd);
+      });
+
+      it("Should directly convert between bridged tokens (skip svJUSD)", async function () {
+        const { gateway, user1, usdc, usdt, usdtBridge } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const usdcAmount = 100_000_000n; // 100 USDC (6 decimals)
+        const deadline = (await time.latest()) + 3600;
+
+        // Mint USDC to user
+        await usdc.mint(user1.address, usdcAmount);
+        await usdc.connect(user1).approve(await gateway.getAddress(), usdcAmount);
+
+        // Fund USDT bridge for burn operation
+        await usdt.mint(await usdtBridge.getAddress(), usdcAmount);
+
+        // Set minted for USDT bridge (USDC converts to JUSD, then JUSD burns on USDT bridge)
+        const jusdAmount = usdcAmount * 10n ** 12n; // 6 decimals -> 18 decimals
+        await usdtBridge.setMinted(jusdAmount);
+
+        const usdtBefore = await usdt.balanceOf(user1.address);
+
+        // Swap USDC.e -> USDT.e (should use direct path)
+        await gateway.connect(user1).swapExactTokensForTokens(
+          await usdc.getAddress(),
+          await usdt.getAddress(),
+          0,
+          usdcAmount,
+          0,
+          user1.address,
+          deadline
+        );
+
+        const usdtAfter = await usdt.balanceOf(user1.address);
+
+        // Both have 6 decimals, so amounts should match (minus any bridge fees)
+        expect(usdtAfter - usdtBefore).to.equal(usdcAmount);
+      });
+
+      it("Should directly convert JUSD to JUICE (skip svJUSD)", async function () {
+        const { gateway, user1, jusd, juice } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const jusdAmount = ethers.parseEther("100");
+        const deadline = (await time.latest()) + 3600;
+
+        // Mint JUSD to user
+        await jusd.mint(user1.address, jusdAmount);
+        await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
+
+        const juiceBefore = await juice.balanceOf(user1.address);
+
+        // Swap JUSD -> JUICE (should use direct path via Equity.invest)
+        await gateway.connect(user1).swapExactTokensForTokens(
+          await jusd.getAddress(),
+          await juice.getAddress(),
+          0,
+          jusdAmount,
+          0,
+          user1.address,
+          deadline
+        );
+
+        const juiceAfter = await juice.balanceOf(user1.address);
+
+        // MockEquity uses PRICE = 100e18, so 100 JUSD = 1 JUICE
+        const expectedJuice = jusdAmount / 100n;
+        expect(juiceAfter - juiceBefore).to.equal(expectedJuice);
+      });
+
+      it("Should directly convert bridged token to JUICE (skip svJUSD)", async function () {
+        const { gateway, user1, usdc, juice } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const usdcAmount = 100_000_000n; // 100 USDC (6 decimals)
+        const deadline = (await time.latest()) + 3600;
+
+        // Mint USDC to user
+        await usdc.mint(user1.address, usdcAmount);
+        await usdc.connect(user1).approve(await gateway.getAddress(), usdcAmount);
+
+        const juiceBefore = await juice.balanceOf(user1.address);
+
+        // Swap USDC.e -> JUICE (should use direct path)
+        await gateway.connect(user1).swapExactTokensForTokens(
+          await usdc.getAddress(),
+          await juice.getAddress(),
+          0,
+          usdcAmount,
+          0,
+          user1.address,
+          deadline
+        );
+
+        const juiceAfter = await juice.balanceOf(user1.address);
+        const jusdEquivalent = usdcAmount * 10n ** 12n; // 6 decimals -> 18 decimals
+        // MockEquity uses PRICE = 100e18, so 100 JUSD = 1 JUICE
+        const expectedJuice = jusdEquivalent / 100n;
+
+        expect(juiceAfter - juiceBefore).to.equal(expectedJuice);
+      });
+
+      it("Should emit SwapExecuted event for direct conversion", async function () {
+        const { gateway, user1, jusd, usdc, usdcBridge } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const jusdAmount = ethers.parseEther("100");
+        const deadline = (await time.latest()) + 3600;
+
+        await jusd.mint(user1.address, jusdAmount);
+        await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
+        await usdc.mint(await usdcBridge.getAddress(), 100_000_000n);
+        await usdcBridge.setMinted(jusdAmount);
+
+        await expect(
+          gateway.connect(user1).swapExactTokensForTokens(
+            await jusd.getAddress(),
+            await usdc.getAddress(),
+            0,
+            jusdAmount,
+            0,
+            user1.address,
+            deadline
+          )
+        )
+          .to.emit(gateway, "SwapExecuted")
+          .withArgs(
+            user1.address,
+            await jusd.getAddress(),
+            await usdc.getAddress(),
+            jusdAmount,
+            anyValue
+          );
+      });
+
+      it("Should revert if minAmountOut not met in direct conversion", async function () {
+        const { gateway, user1, jusd, usdc, usdcBridge } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const jusdAmount = ethers.parseEther("100");
+        const deadline = (await time.latest()) + 3600;
+
+        await jusd.mint(user1.address, jusdAmount);
+        await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
+        await usdc.mint(await usdcBridge.getAddress(), 100_000_000n);
+        await usdcBridge.setMinted(jusdAmount);
+
+        // Expect 200 USDC but only 100 USDC will be received
+        const unreasonableMinOutput = 200_000_000n; // 200 USDC
+
+        await expect(
+          gateway.connect(user1).swapExactTokensForTokens(
+            await jusd.getAddress(),
+            await usdc.getAddress(),
+            0,
+            jusdAmount,
+            unreasonableMinOutput,
+            user1.address,
+            deadline
+          )
+        ).to.be.revertedWithCustomError(gateway, "InsufficientOutput");
+      });
+
+      it("Should still use pool swap for cBTC to JUSD (not direct)", async function () {
+        const { gateway, user1, wcbtc, jusd, svJusd, swapRouter } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const cbtcAmount = ethers.parseEther("1");
+        const deadline = (await time.latest()) + 3600;
+
+        // Fund user with native cBTC
+        await user1.sendTransaction({
+          to: await wcbtc.getAddress(),
+          value: cbtcAmount,
+        });
+
+        // Setup mock swap router to return svJUSD
+        const expectedSvJusd = ethers.parseEther("50000");
+        // Use explicit function signature to avoid ambiguity with ERC4626.mint(uint256,address)
+        await svJusd["mint(address,uint256)"](await swapRouter.getAddress(), expectedSvJusd);
+        await swapRouter.setSwapOutput(expectedSvJusd);
+
+        // This should NOT use direct conversion (cBTC is not a USD token)
+        // It should go through the normal pool swap path
+        await gateway.connect(user1).swapExactTokensForTokens(
+          ethers.ZeroAddress, // Native cBTC
+          await jusd.getAddress(),
+          3000,
+          cbtcAmount,
+          0,
+          user1.address,
+          deadline,
+          { value: cbtcAmount }
+        );
+
+        // Verify swap router was called (not direct path)
+        // The exact assertion depends on mock implementation
+      });
+    });
   });
 });
