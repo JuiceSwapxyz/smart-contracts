@@ -164,8 +164,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     mapping(address => BridgeConfig) public bridgeConfigs;
     /// @notice List of all supported bridged tokens (for enumeration)
     address[] public bridgedTokens;
-    /// @notice Maximum number of bridged tokens that can be added
-    uint8 public constant MAX_BRIDGED_TOKENS = 10;
     /// @notice Decimals of JUSD (cached for gas efficiency)
     uint8 public immutable JUSD_DECIMALS;
 
@@ -187,7 +185,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     error BridgedTokenAlreadyExists(address token);
     error BridgedTokenNotFound(address token);
     error InvalidBridgeConfig();
-    error TooManyBridgedTokens();
     error NotApprovedMinter(address bridge);
 
     /**
@@ -987,7 +984,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
      */
     function registerBridgedToken(address token, address bridge) external {
         if (token == address(0) || bridge == address(0)) revert InvalidBridgeConfig();
-        if (bridgedTokens.length >= MAX_BRIDGED_TOKENS) revert TooManyBridgedTokens();
         if (bridgeConfigs[token].bridge != IStablecoinBridge(address(0))) {
             revert BridgedTokenAlreadyExists(token);
         }
