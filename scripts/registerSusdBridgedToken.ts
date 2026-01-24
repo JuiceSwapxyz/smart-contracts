@@ -20,9 +20,9 @@ import {
  * Note: This is permissionless - anyone can call registerBridgedToken IF the bridge
  * is an approved JUSD minter (checked on-chain via JUSD governance).
  *
- * After registration, the Gateway will automatically:
- * - Convert SUSD → JUSD → svJUSD for input tokens
- * - Convert svJUSD → JUSD → SUSD for output tokens
+ * After registration, the Gateway will automatically handle SUSD conversions:
+ * - Direct path (optimized): SUSD ↔ JUSD, SUSD ↔ other bridged tokens
+ * - Pool path: SUSD ↔ cBTC (via SUSD → JUSD → svJUSD → pool → cBTC)
  *
  * This replaces the separate StablecoinBridge routing with unified Gateway routing.
  */
