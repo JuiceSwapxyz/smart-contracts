@@ -319,52 +319,99 @@ describe("JuiceSwapGateway", function () {
     });
   });
 
-  describe("JUICE Input Restriction", function () {
-    it("Should revert when JUICE is used as input token in swap", async function () {
-      const { gateway, user1, juice, wcbtc } =
+  describe("JUICE Input Support", function () {
+    it("Should swap JUICE for WcBTC via redeemFrom", async function () {
+      const { gateway, user1, juice, jusd, wcbtc, swapRouter } =
         await loadFixture(deployGatewayWithBalancesFixture);
 
       const deadline = (await time.latest()) + DEADLINE_OFFSET;
-      const swapAmount = ethers.parseEther("10");
+      const swapAmount = ethers.parseEther("1"); // 1 JUICE
+      const expectedJusd = ethers.parseEther("100"); // 1 JUICE = 100 JUSD (MockEquity PRICE)
+      const expectedWcbtc = ethers.parseEther("0.5");
+
+      // Fund the JUICE contract with JUSD for redemption
+      await jusd.mint(await juice.getAddress(), expectedJusd);
+
+      // Set swap output
+      await swapRouter.setSwapOutput(expectedWcbtc);
 
       await juice.connect(user1).approve(await gateway.getAddress(), swapAmount);
 
-      await expect(
-        gateway.connect(user1).swapExactTokensForTokens(
+      const wcbtcBefore = await wcbtc.balanceOf(user1.address);
+
+      await gateway.connect(user1).swapExactTokensForTokens(
         await juice.getAddress(),
         await wcbtc.getAddress(),
         3000,
         swapAmount,
-          0,
-          user1.address,
-          deadline
-        )
-      ).to.be.revertedWithCustomError(gateway, "JuiceInputNotSupported");
+        0,
+        user1.address,
+        deadline
+      );
+
+      const wcbtcAfter = await wcbtc.balanceOf(user1.address);
+      expect(wcbtcAfter - wcbtcBefore).to.equal(expectedWcbtc);
     });
 
-    it("Should revert when JUICE is used as input in addLiquidity", async function () {
-      const { gateway, user1, juice, wcbtc } =
+    it("Should swap JUICE for JUSD directly", async function () {
+      const { gateway, user1, juice, jusd, svJusd, swapRouter } =
         await loadFixture(deployGatewayWithBalancesFixture);
 
       const deadline = (await time.latest()) + DEADLINE_OFFSET;
-      const liquidityAmount = ethers.parseEther("10");
+      const swapAmount = ethers.parseEther("1"); // 1 JUICE
+      const expectedJusd = ethers.parseEther("100"); // 1 JUICE = 100 JUSD
 
-      await juice.connect(user1).approve(await gateway.getAddress(), liquidityAmount);
-      await wcbtc.connect(user1).approve(await gateway.getAddress(), liquidityAmount);
+      // Fund the JUICE contract with JUSD for redemption
+      await jusd.mint(await juice.getAddress(), expectedJusd);
+
+      // For JUICE → JUSD, the swap goes through svJUSD pool
+      // Set swap output to return the svJUSD equivalent
+      const svJusdShares = await svJusd.convertToShares(expectedJusd);
+      await swapRouter.setSwapOutput(svJusdShares);
+
+      await juice.connect(user1).approve(await gateway.getAddress(), swapAmount);
+
+      const jusdBefore = await jusd.balanceOf(user1.address);
+
+      await gateway.connect(user1).swapExactTokensForTokens(
+        await juice.getAddress(),
+        await jusd.getAddress(),
+        3000,
+        swapAmount,
+        0,
+        user1.address,
+        deadline
+      );
+
+      const jusdAfter = await jusd.balanceOf(user1.address);
+      // User should receive JUSD (redeemed from svJUSD)
+      expect(jusdAfter).to.be.gt(jusdBefore);
+    });
+
+    it("Should emit SwapExecuted event for JUICE input", async function () {
+      const { gateway, user1, juice, jusd, wcbtc, swapRouter } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const swapAmount = ethers.parseEther("1");
+      const expectedJusd = ethers.parseEther("100");
+      const expectedWcbtc = ethers.parseEther("0.5");
+
+      await jusd.mint(await juice.getAddress(), expectedJusd);
+      await swapRouter.setSwapOutput(expectedWcbtc);
+      await juice.connect(user1).approve(await gateway.getAddress(), swapAmount);
 
       await expect(
-        gateway.connect(user1).addLiquidity(
-        await juice.getAddress(),
-        await wcbtc.getAddress(),
-        3000,
-        liquidityAmount,
-          liquidityAmount,
-          0,
+        gateway.connect(user1).swapExactTokensForTokens(
+          await juice.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          swapAmount,
           0,
           user1.address,
           deadline
         )
-      ).to.be.revertedWithCustomError(gateway, "JuiceInputNotSupported");
+      ).to.emit(gateway, "SwapExecuted");
     });
   });
 
@@ -1201,13 +1248,14 @@ describe("JuiceSwapGateway", function () {
         );
     });
 
-    it("Should revert when JUICE is used as input token", async function () {
-      const { gateway, user1, juice, svJusd, wcbtc, positionManager } =
+    it("Should increase liquidity with JUICE as input token", async function () {
+      const { gateway, user1, juice, jusd, svJusd, wcbtc, positionManager } =
         await loadFixture(deployGatewayWithBalancesFixture);
 
       const deadline = (await time.latest()) + DEADLINE_OFFSET;
       const tokenId = 1;
-      const juiceAmount = ethers.parseEther("100");
+      const juiceAmount = ethers.parseEther("1"); // 1 JUICE
+      const expectedJusd = ethers.parseEther("100"); // 1 JUICE = 100 JUSD (MockEquity PRICE)
       const wcbtcAmount = ethers.parseEther("1");
 
       const svJusdAddr = await svJusd.getAddress();
@@ -1216,9 +1264,13 @@ describe("JuiceSwapGateway", function () {
       await positionManager.mintNFT(user1.address, tokenId);
       await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
 
+      // Fund the JUICE contract with JUSD for redemption
+      await jusd.mint(await juice.getAddress(), expectedJusd);
+
       await juice.connect(user1).approve(await gateway.getAddress(), juiceAmount);
       await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
 
+      // Should succeed - JUICE is converted via redeemFrom to JUSD, then to svJUSD
       await expect(
         gateway.connect(user1).increaseLiquidity(
           tokenId,
@@ -1230,7 +1282,7 @@ describe("JuiceSwapGateway", function () {
           0,
           deadline
         )
-      ).to.be.revertedWithCustomError(gateway, "JuiceInputNotSupported");
+      ).to.not.be.reverted;
     });
 
     it("Should revert if tokens don't match position", async function () {

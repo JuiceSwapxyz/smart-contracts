@@ -18,6 +18,7 @@ interface IWrappedCBTC is IERC20 {
 interface IEquity is IERC20 {
     function invest(uint256 amount, uint256 expectedShares) external returns (uint256);
     function redeem(address target, uint256 shares) external returns (uint256);
+    function redeemFrom(address owner, address target, uint256 shares, uint256 expectedProceeds) external returns (uint256);
     function calculateProceeds(uint256 shares) external view returns (uint256);
     function calculateShares(uint256 investment) external view returns (uint256);
 }
@@ -178,7 +179,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     error TransferFailed();
     error DeadlineExpired();
     error DirectTransferNotAccepted();
-    error JuiceInputNotSupported();
     error NotNFTOwner(address caller, address owner);
     error InvalidFee(uint24 fee);
     error TokenMismatch(address expected0, address expected1, address provided0, address provided1);
@@ -671,9 +671,13 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
             uint256 shares = SV_JUSD.deposit(amount, address(this));
             return (address(SV_JUSD), shares);
         } else if (token == address(JUICE)) {
-            // JUICE cannot be used as input due to Equity flash loan protection.
-            // Users must redeem JUICE directly: JUICE.redeem() → then swap the JUSD.
-            revert JuiceInputNotSupported();
+            // JUICE → JUSD via Equity.redeemFrom() → svJUSD
+            // Using redeemFrom() bypasses flash loan protection on Gateway address,
+            // since the check is on `owner` (msg.sender/user), not on `target` (Gateway).
+            // User must have approved Gateway for JUICE spending.
+            uint256 jusdAmount = JUICE.redeemFrom(msg.sender, address(this), amount, 0);
+            uint256 shares = SV_JUSD.deposit(jusdAmount, address(this));
+            return (address(SV_JUSD), shares);
         }
 
         // Check if token is a bridged stablecoin
@@ -948,10 +952,11 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
                 // Convert excess svJUSD back to bridged USD via JUSD
                 uint256 jusdAmount = SV_JUSD.redeem(excessAmount, address(this), address(this));
                 config.bridge.burnAndSend(to, jusdAmount);
+            } else if (userToken == address(JUICE)) {
+                // JUICE input: return excess as JUSD (can't convert back to JUICE due to flash loan protection)
+                SV_JUSD.redeem(excessAmount, to, address(this));
             } else {
-                // Unreachable: if actualToken is svJUSD, userToken must be JUSD (handled above)
-                // or a bridged token (handled in if-branch). JUICE maps to svJUSD but cannot
-                // be used as input (JuiceInputNotSupported), so this branch is never reached.
+                // Unreachable: if actualToken is svJUSD, userToken must be JUSD, bridged token, or JUICE
                 revert InvalidToken();
             }
         } else if (actualToken != address(0)) {
