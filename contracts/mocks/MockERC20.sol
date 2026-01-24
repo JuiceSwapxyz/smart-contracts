@@ -6,6 +6,9 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 contract MockERC20 is ERC20 {
     uint8 private _decimals;
 
+    // For JUSD minter simulation (used by JuiceSwapGateway.registerBridgedToken)
+    mapping(address => bool) private _minters;
+
     constructor(
         string memory name,
         string memory symbol,
@@ -24,5 +27,14 @@ contract MockERC20 is ERC20 {
 
     function burn(address from, uint256 amount) external {
         _burn(from, amount);
+    }
+
+    // JUSD minter simulation
+    function setMinter(address minter, bool approved) external {
+        _minters[minter] = approved;
+    }
+
+    function isMinter(address minter) external view returns (bool) {
+        return _minters[minter];
     }
 }

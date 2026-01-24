@@ -8,9 +8,7 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 interface IWrappedCBTC is IERC20 {
     function deposit() external payable;
@@ -22,6 +20,10 @@ interface IEquity is IERC20 {
     function redeem(address target, uint256 shares) external returns (uint256);
     function calculateProceeds(uint256 shares) external view returns (uint256);
     function calculateShares(uint256 investment) external view returns (uint256);
+}
+
+interface IJuiceDollar {
+    function isMinter(address minter) external view returns (bool);
 }
 
 interface ISwapRouter {
@@ -142,7 +144,7 @@ interface INonfungiblePositionManager {
  *      The addLiquidity/removeLiquidity functions are simplified wrappers.
  *      Advanced users should interact with the NonfungiblePositionManager directly.
  */
-contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausable {
+contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     IERC20 public immutable JUSD;
     IERC4626 public immutable SV_JUSD;
     IEquity public immutable JUICE;
@@ -167,7 +169,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     uint8 public immutable JUSD_DECIMALS;
 
     address private constant NATIVE_TOKEN = address(0);
-    uint24 public defaultFee = 3000; // 0.3% default fee tier
+    uint24 public constant DEFAULT_FEE = 3000; // 0.3% default fee tier (immutable)
 
     error InvalidToken();
     error InvalidAmount();
@@ -186,12 +188,9 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
     error BridgedTokenNotFound(address token);
     error InvalidBridgeConfig();
     error TooManyBridgedTokens();
+    error NotApprovedMinter(address bridge);
 
-    event TokenRescued(address indexed token, address indexed to, uint256 amount);
-    event NativeRescued(address indexed to, uint256 amount);
-    event DefaultFeeUpdated(uint24 oldFee, uint24 newFee);
-    event BridgedTokenAdded(address indexed token, address indexed bridge, uint8 decimals);
-    event BridgedTokenRemoved(address indexed token);
+    event BridgedTokenRegistered(address indexed token, address indexed bridge, address indexed registeredBy, uint8 decimals);
 
     /**
      * @notice Initializes the JuiceSwap Gateway for Uniswap V3
@@ -209,7 +208,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         address _wcbtc,
         address _swapRouter,
         address _positionManager
-    ) Ownable(msg.sender) {
+    ) {
         JUSD = IERC20(_jusd);
         SV_JUSD = IERC4626(_svJusd);
         JUICE = IEquity(_juice);
@@ -240,12 +239,12 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         uint256 minAmountOut,
         address to,
         uint256 deadline
-    ) external payable nonReentrant whenNotPaused returns (uint256 amountOut) {
+    ) external payable nonReentrant returns (uint256 amountOut) {
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (amountIn == 0) revert InvalidAmount();
 
-        // Use defaultFee when fee is 0 (JUICE1-6 fix)
-        uint24 effectiveFee = fee == 0 ? defaultFee : fee;
+        // Use DEFAULT_FEE when fee is 0 (JUICE1-6 fix)
+        uint24 effectiveFee = fee == 0 ? DEFAULT_FEE : fee;
         if (effectiveFee >= 1_000_000) revert InvalidFee(effectiveFee);
 
         // Step 1: Handle input token conversion
@@ -297,7 +296,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         uint256 amountBMin,
         address to,
         uint256 deadline
-    ) external payable nonReentrant whenNotPaused returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
+    ) external payable nonReentrant returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
         if (block.timestamp > deadline) revert DeadlineExpired();
 
         // Prevent invalid token pairs where both tokens convert to the same actual token
@@ -306,8 +305,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
             revert InvalidTokenPair(tokenA, tokenB);
         }
 
-        // Use defaultFee when fee is 0 (JUICE1-6 fix)
-        uint24 effectiveFee = fee == 0 ? defaultFee : fee;
+        // Use DEFAULT_FEE when fee is 0 (JUICE1-6 fix)
+        uint24 effectiveFee = fee == 0 ? DEFAULT_FEE : fee;
 
         // Convert input tokens
         (address actualTokenA, uint256 actualAmountADesired) = _handleTokenIn(tokenA, amountADesired);
@@ -381,7 +380,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         uint256 amountAMin,
         uint256 amountBMin,
         uint256 deadline
-    ) external payable nonReentrant whenNotPaused returns (uint256 amountA, uint256 amountB, uint128 liquidity) {
+    ) external payable nonReentrant returns (uint256 amountA, uint256 amountB, uint128 liquidity) {
         if (block.timestamp > deadline) revert DeadlineExpired();
 
         // Verify NFT ownership
@@ -471,7 +470,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         uint256 amountBMin,
         address to,
         uint256 deadline
-    ) external nonReentrant whenNotPaused returns (uint256 amountA, uint256 amountB) {
+    ) external nonReentrant returns (uint256 amountA, uint256 amountB) {
         if (block.timestamp > deadline) revert DeadlineExpired();
 
         // Verify NFT ownership to prevent theft
@@ -892,29 +891,17 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         }
     }
 
-    // ==================== Admin Functions ====================
+    // ==================== Bridge Registration (Permissionless) ====================
 
     /**
-     * @notice Updates the default fee tier for swaps
-     * @param newFee The new fee tier (500 = 0.05%, 3000 = 0.3%, 10000 = 1%)
-     */
-    function setDefaultFee(uint24 newFee) external onlyOwner {
-        if (newFee >= 1_000_000) revert InvalidFee(newFee);
-        // Verify fee tier is enabled in factory (JUICE1-7 fix)
-        int24 tickSpacing = FACTORY.feeAmountTickSpacing(newFee);
-        if (tickSpacing == 0) revert InvalidFee(newFee);
-
-        uint24 oldFee = defaultFee;
-        defaultFee = newFee;
-        emit DefaultFeeUpdated(oldFee, newFee);
-    }
-
-    /**
-     * @notice Adds a bridged stablecoin that can be converted to JUSD via its bridge
-     * @param token The bridged stablecoin address (e.g., USDC.e, USDT.e, ctUSD)
+     * @notice Registers a bridged stablecoin that can be converted to JUSD via its bridge
+     * @dev Permissionless - anyone can register a bridge IF it's an approved JUSD minter.
+     *      The security comes from JUSD governance: bridges must go through the veto period
+     *      before they can mint JUSD, so only governance-approved bridges can be registered.
+     * @param token The bridged stablecoin address (e.g., USDC.e, USDT.e, SUSD)
      * @param bridge The StablecoinBridge contract for this token
      */
-    function addBridgedToken(address token, address bridge) external onlyOwner {
+    function registerBridgedToken(address token, address bridge) external {
         if (token == address(0) || bridge == address(0)) revert InvalidBridgeConfig();
         if (bridgedTokens.length >= MAX_BRIDGED_TOKENS) revert TooManyBridgedTokens();
         if (bridgeConfigs[token].bridge != IStablecoinBridge(address(0))) {
@@ -925,6 +912,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         IStablecoinBridge bridgeContract = IStablecoinBridge(bridge);
         if (bridgeContract.usd() != token) revert InvalidBridgeConfig();
         if (bridgeContract.JUSD() != address(JUSD)) revert InvalidBridgeConfig();
+
+        // Critical: Bridge must be approved JUSD minter (via JUSD governance veto system)
+        // This ensures only governance-approved bridges can be registered
+        if (!IJuiceDollar(address(JUSD)).isMinter(bridge)) revert NotApprovedMinter(bridge);
 
         uint8 decimals = IERC20Metadata(token).decimals();
         bridgeConfigs[token] = BridgeConfig({
@@ -938,38 +929,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
         // Approve JUSD to bridge for burn operations
         JUSD.approve(bridge, type(uint256).max);
 
-        emit BridgedTokenAdded(token, bridge, decimals);
-    }
-
-    /**
-     * @notice Removes a bridged stablecoin from the supported list
-     * @param token The bridged stablecoin address to remove
-     */
-    function removeBridgedToken(address token) external onlyOwner {
-        if (bridgeConfigs[token].bridge == IStablecoinBridge(address(0))) {
-            revert BridgedTokenNotFound(token);
-        }
-
-        address bridge = address(bridgeConfigs[token].bridge);
-
-        // Remove from mapping
-        delete bridgeConfigs[token];
-
-        // Remove from array (swap with last element and pop)
-        uint256 length = bridgedTokens.length;
-        for (uint256 i = 0; i < length; i++) {
-            if (bridgedTokens[i] == token) {
-                bridgedTokens[i] = bridgedTokens[length - 1];
-                bridgedTokens.pop();
-                break;
-            }
-        }
-
-        // Revoke approvals
-        IERC20(token).approve(bridge, 0);
-        JUSD.approve(bridge, 0);
-
-        emit BridgedTokenRemoved(token);
+        emit BridgedTokenRegistered(token, bridge, msg.sender, decimals);
     }
 
     /**
@@ -977,41 +937,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, Ownable, ReentrancyGuard, Pausab
      */
     function getBridgedTokens() external view returns (address[] memory) {
         return bridgedTokens;
-    }
-
-    /**
-     * @notice Rescue function to withdraw accidentally sent native cBTC
-     */
-    function rescueNative() external onlyOwner {
-        uint256 balance = address(this).balance;
-        if (balance > 0) {
-            (bool success, ) = owner().call{value: balance}("");
-            if (!success) revert TransferFailed();
-            emit NativeRescued(owner(), balance);
-        }
-    }
-
-    /**
-     * @notice Rescue function to withdraw accidentally sent tokens
-     */
-    function rescueToken(address token, address to, uint256 amount) external onlyOwner {
-        if (to == address(0)) revert InvalidToken();
-        SafeERC20.safeTransfer(IERC20(token), to, amount);
-        emit TokenRescued(token, to, amount);
-    }
-
-    /**
-     * @notice Pause the contract
-     */
-    function pause() external onlyOwner {
-        _pause();
-    }
-
-    /**
-     * @notice Unpause the contract
-     */
-    function unpause() external onlyOwner {
-        _unpause();
     }
 
     /**

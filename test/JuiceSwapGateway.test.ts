@@ -143,19 +143,9 @@ describe("JuiceSwapGateway", function () {
       expect(await gateway.POSITION_MANAGER()).to.equal(await positionManager.getAddress());
     });
 
-    it("Should set correct default fee tier", async function () {
+    it("Should have correct constant fee tier", async function () {
       const { gateway } = await loadFixture(deployGatewayFixture);
-      expect(await gateway.defaultFee()).to.equal(3000); // 0.3%
-    });
-
-    it("Should set deployer as owner", async function () {
-      const { gateway, owner } = await loadFixture(deployGatewayFixture);
-      expect(await gateway.owner()).to.equal(owner.address);
-    });
-
-    it("Should not be paused initially", async function () {
-      const { gateway } = await loadFixture(deployGatewayFixture);
-      expect(await gateway.paused()).to.be.false;
+      expect(await gateway.DEFAULT_FEE()).to.equal(3000); // 0.3% - immutable
     });
   });
 
@@ -1211,41 +1201,6 @@ describe("JuiceSwapGateway", function () {
         );
     });
 
-    it("Should revert when paused", async function () {
-      const { gateway, owner, user1, jusd, svJusd, wcbtc, positionManager } =
-        await loadFixture(deployGatewayWithBalancesFixture);
-
-      const deadline = (await time.latest()) + DEADLINE_OFFSET;
-      const tokenId = 1;
-      const jusdAmount = ethers.parseEther("100");
-      const wcbtcAmount = ethers.parseEther("1");
-
-      const svJusdAddr = await svJusd.getAddress();
-      const wcbtcAddr = await wcbtc.getAddress();
-      await positionManager.setPositionData(tokenId, svJusdAddr, wcbtcAddr, 100);
-      await positionManager.mintNFT(user1.address, tokenId);
-      await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
-
-      // Pause the contract
-      await gateway.connect(owner).pause();
-
-      await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
-      await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
-
-      await expect(
-        gateway.connect(user1).increaseLiquidity(
-          tokenId,
-          await jusd.getAddress(),
-          await wcbtc.getAddress(),
-          jusdAmount,
-          wcbtcAmount,
-          0,
-          0,
-          deadline
-        )
-      ).to.be.revertedWithCustomError(gateway, "EnforcedPause");
-    });
-
     it("Should revert when JUICE is used as input token", async function () {
       const { gateway, user1, juice, svJusd, wcbtc, positionManager } =
         await loadFixture(deployGatewayWithBalancesFixture);
@@ -1794,148 +1749,6 @@ describe("JuiceSwapGateway", function () {
           deadline
         )
       ).to.be.revertedWithCustomError(gateway, "NotNFTOwner");
-    });
-  });
-
-  describe("Admin Functions", function () {
-    it("Should allow owner to set default fee", async function () {
-      const { gateway, owner } = await loadFixture(deployGatewayFixture);
-
-      const newFee = 500; // 0.05%
-      await expect(gateway.connect(owner).setDefaultFee(newFee))
-        .to.emit(gateway, "DefaultFeeUpdated")
-        .withArgs(3000, newFee);
-
-      expect(await gateway.defaultFee()).to.equal(newFee);
-    });
-
-    it("Should not allow non-owner to set default fee", async function () {
-      const { gateway, user1 } = await loadFixture(deployGatewayFixture);
-
-      await expect(
-        gateway.connect(user1).setDefaultFee(500)
-      ).to.be.revertedWithCustomError(gateway, "OwnableUnauthorizedAccount");
-    });
-
-    it("Should accept valid standard fee tiers", async function () {
-      const { gateway, owner } = await loadFixture(deployGatewayFixture);
-
-      await expect(gateway.connect(owner).setDefaultFee(100)).to.not.be.reverted;
-      await expect(gateway.connect(owner).setDefaultFee(500)).to.not.be.reverted;
-      await expect(gateway.connect(owner).setDefaultFee(3000)).to.not.be.reverted;
-      await expect(gateway.connect(owner).setDefaultFee(10000)).to.not.be.reverted;
-    });
-
-    it("Should reject fee tiers not enabled in factory", async function () {
-      const { gateway, owner } = await loadFixture(deployGatewayFixture);
-
-      // Fee tier 2000 is not a standard Uniswap V3 fee tier (100, 500, 3000, 10000)
-      await expect(
-        gateway.connect(owner).setDefaultFee(2000)
-      ).to.be.revertedWithCustomError(gateway, "InvalidFee");
-
-      // Fee tier 999999 is also not enabled in factory
-      await expect(
-        gateway.connect(owner).setDefaultFee(999999)
-      ).to.be.revertedWithCustomError(gateway, "InvalidFee");
-    });
-
-    it("Should reject fee tiers >= 1,000,000", async function () {
-      const { gateway, owner } = await loadFixture(deployGatewayFixture);
-
-      await expect(
-        gateway.connect(owner).setDefaultFee(1_000_000)
-      ).to.be.revertedWithCustomError(gateway, "InvalidFee");
-
-      await expect(
-        gateway.connect(owner).setDefaultFee(2_000_000)
-      ).to.be.revertedWithCustomError(gateway, "InvalidFee");
-    });
-
-    it("Should allow owner to pause", async function () {
-      const { gateway, owner } = await loadFixture(deployGatewayFixture);
-
-      await gateway.connect(owner).pause();
-      expect(await gateway.paused()).to.be.true;
-    });
-
-    it("Should allow owner to unpause", async function () {
-      const { gateway, owner } = await loadFixture(deployGatewayFixture);
-
-      await gateway.connect(owner).pause();
-      await gateway.connect(owner).unpause();
-      expect(await gateway.paused()).to.be.false;
-    });
-
-    it("Should not allow non-owner to pause", async function () {
-      const { gateway, user1 } = await loadFixture(deployGatewayFixture);
-
-      await expect(
-        gateway.connect(user1).pause()
-      ).to.be.revertedWithCustomError(gateway, "OwnableUnauthorizedAccount");
-    });
-
-    it("Should block swaps when paused", async function () {
-      const { gateway, owner, user1, jusd, wcbtc } =
-        await loadFixture(deployGatewayWithBalancesFixture);
-
-      await gateway.connect(owner).pause();
-
-      const deadline = (await time.latest()) + DEADLINE_OFFSET;
-      await jusd.connect(user1).approve(await gateway.getAddress(), SWAP_AMOUNT);
-
-      await expect(
-        gateway.connect(user1).swapExactTokensForTokens(
-        await jusd.getAddress(),
-        await wcbtc.getAddress(),
-        3000,
-        SWAP_AMOUNT,
-          0,
-          user1.address,
-          deadline
-        )
-      ).to.be.revertedWithCustomError(gateway, "EnforcedPause");
-    });
-
-    it("Should allow owner to rescue native tokens", async function () {
-      const { gateway, owner } = await loadFixture(deployGatewayFixture);
-
-      // Note: Gateway blocks direct transfers via receive(), so native tokens
-      // can only get stuck through wrapped token operations
-      // This test just verifies the rescue function can be called successfully
-      // Event is only emitted if balance > 0
-      await expect(gateway.connect(owner).rescueNative()).to.not.be.reverted;
-    });
-
-    it("Should allow owner to rescue ERC20 tokens", async function () {
-      const { gateway, owner, jusd } = await loadFixture(deployGatewayFixture);
-
-      const rescueAmount = ethers.parseEther("100");
-      await jusd.mint(await gateway.getAddress(), rescueAmount);
-
-      await expect(
-        gateway.connect(owner).rescueToken(
-          await jusd.getAddress(),
-          owner.address,
-          rescueAmount
-        )
-      )
-        .to.emit(gateway, "TokenRescued")
-        .withArgs(await jusd.getAddress(), owner.address, rescueAmount);
-
-      expect(await jusd.balanceOf(owner.address)).to.equal(rescueAmount);
-    });
-
-    it("Should not allow rescuing tokens to zero address", async function () {
-      const { gateway, owner, jusd } = await loadFixture(deployGatewayFixture);
-
-      await expect(
-        gateway.connect(owner).rescueToken(
-          await jusd.getAddress(),
-          ethers.ZeroAddress,
-          ethers.parseEther("100")
-        )
-      ).to.be.revertedWithCustomError(gateway, "InvalidToken");
     });
   });
 
@@ -2567,10 +2380,15 @@ describe("JuiceSwapGateway", function () {
       await usdt.mint(user1.address, userAmount);
       await ctUsd.mint(user1.address, userAmount);
 
-      // Add bridged tokens to gateway
-      await gateway.connect(owner).addBridgedToken(await usdc.getAddress(), await usdcBridge.getAddress());
-      await gateway.connect(owner).addBridgedToken(await usdt.getAddress(), await usdtBridge.getAddress());
-      await gateway.connect(owner).addBridgedToken(await ctUsd.getAddress(), await ctUsdBridge.getAddress());
+      // Set bridges as approved minters (simulates JUSD governance approval)
+      await jusd.setMinter(await usdcBridge.getAddress(), true);
+      await jusd.setMinter(await usdtBridge.getAddress(), true);
+      await jusd.setMinter(await ctUsdBridge.getAddress(), true);
+
+      // Register bridged tokens on gateway (permissionless - anyone can call if bridge is minter)
+      await gateway.registerBridgedToken(await usdc.getAddress(), await usdcBridge.getAddress());
+      await gateway.registerBridgedToken(await usdt.getAddress(), await usdtBridge.getAddress());
+      await gateway.registerBridgedToken(await ctUsd.getAddress(), await ctUsdBridge.getAddress());
 
       return {
         owner,
@@ -2593,44 +2411,8 @@ describe("JuiceSwapGateway", function () {
       };
     }
 
-    describe("Admin Functions", function () {
-      it("Should add bridged token", async function () {
-        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
-
-        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
-        const newToken = await MockERC20Factory.deploy("New Token", "NEW", 6);
-
-        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
-        const newBridge = await MockBridgeFactory.deploy(
-          await newToken.getAddress(),
-          await jusd.getAddress(),
-          BRIDGE_LIMIT,
-          BRIDGE_WEEKS
-        );
-
-        await expect(
-          gateway.connect(owner).addBridgedToken(
-            await newToken.getAddress(),
-            await newBridge.getAddress()
-          )
-        ).to.emit(gateway, "BridgedTokenAdded")
-          .withArgs(await newToken.getAddress(), await newBridge.getAddress(), 6);
-
-        expect(await gateway.isBridgedToken(await newToken.getAddress())).to.be.true;
-      });
-
-      it("Should revert when adding duplicate bridged token", async function () {
-        const { gateway, owner, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
-
-        await expect(
-          gateway.connect(owner).addBridgedToken(
-            await usdc.getAddress(),
-            await usdcBridge.getAddress()
-          )
-        ).to.be.revertedWithCustomError(gateway, "BridgedTokenAlreadyExists");
-      });
-
-      it("Should revert when non-owner adds bridged token", async function () {
+    describe("Bridge Registration (Permissionless)", function () {
+      it("Should register bridged token when bridge is approved minter", async function () {
         const { gateway, user1, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
 
         const MockERC20Factory = await ethers.getContractFactory("MockERC20");
@@ -2644,55 +2426,53 @@ describe("JuiceSwapGateway", function () {
           BRIDGE_WEEKS
         );
 
+        // Set bridge as approved minter (simulates JUSD governance approval)
+        await jusd.setMinter(await newBridge.getAddress(), true);
+
+        // Anyone can register (permissionless)
         await expect(
-          gateway.connect(user1).addBridgedToken(
+          gateway.connect(user1).registerBridgedToken(
             await newToken.getAddress(),
             await newBridge.getAddress()
           )
-        ).to.be.revertedWithCustomError(gateway, "OwnableUnauthorizedAccount");
+        ).to.emit(gateway, "BridgedTokenRegistered")
+          .withArgs(await newToken.getAddress(), await newBridge.getAddress(), user1.address, 6);
+
+        expect(await gateway.isBridgedToken(await newToken.getAddress())).to.be.true;
       });
 
-      it("Should remove bridged token", async function () {
-        const { gateway, owner, usdc } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+      it("Should revert when bridge is not approved minter", async function () {
+        const { gateway, user1, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+        const newToken = await MockERC20Factory.deploy("New Token", "NEW", 6);
+
+        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+        const newBridge = await MockBridgeFactory.deploy(
+          await newToken.getAddress(),
+          await jusd.getAddress(),
+          BRIDGE_LIMIT,
+          BRIDGE_WEEKS
+        );
+
+        // Do NOT set bridge as minter - should fail
+        await expect(
+          gateway.connect(user1).registerBridgedToken(
+            await newToken.getAddress(),
+            await newBridge.getAddress()
+          )
+        ).to.be.revertedWithCustomError(gateway, "NotApprovedMinter");
+      });
+
+      it("Should revert when registering duplicate bridged token", async function () {
+        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
 
         await expect(
-          gateway.connect(owner).removeBridgedToken(await usdc.getAddress())
-        ).to.emit(gateway, "BridgedTokenRemoved")
-          .withArgs(await usdc.getAddress());
-
-        expect(await gateway.isBridgedToken(await usdc.getAddress())).to.be.false;
-      });
-
-      it("Should revoke both token and JUSD approvals when removing bridged token", async function () {
-        const { gateway, owner, usdc, usdt, usdcBridge, usdtBridge, jusd } =
-          await loadFixture(deployGatewayWithBridgedTokensFixture);
-
-        const gatewayAddress = await gateway.getAddress();
-        const usdcBridgeAddress = await usdcBridge.getAddress();
-        const usdtBridgeAddress = await usdtBridge.getAddress();
-
-        // Verify both bridges have unlimited JUSD approval before removal
-        expect(await jusd.allowance(gatewayAddress, usdcBridgeAddress)).to.equal(ethers.MaxUint256);
-        expect(await jusd.allowance(gatewayAddress, usdtBridgeAddress)).to.equal(ethers.MaxUint256);
-
-        // Remove USDC bridge
-        await gateway.connect(owner).removeBridgedToken(await usdc.getAddress());
-
-        // Verify USDC bridge approvals are revoked
-        expect(await usdc.allowance(gatewayAddress, usdcBridgeAddress)).to.equal(0);
-        expect(await jusd.allowance(gatewayAddress, usdcBridgeAddress)).to.equal(0);
-
-        // Verify USDT bridge approvals remain unaffected
-        expect(await jusd.allowance(gatewayAddress, usdtBridgeAddress)).to.equal(ethers.MaxUint256);
-      });
-
-      it("Should revert when removing non-existent bridged token", async function () {
-        const { gateway, owner } = await loadFixture(deployGatewayWithBalancesFixture);
-
-        const randomAddress = ethers.Wallet.createRandom().address;
-        await expect(
-          gateway.connect(owner).removeBridgedToken(randomAddress)
-        ).to.be.revertedWithCustomError(gateway, "BridgedTokenNotFound");
+          gateway.registerBridgedToken(
+            await usdc.getAddress(),
+            await usdcBridge.getAddress()
+          )
+        ).to.be.revertedWithCustomError(gateway, "BridgedTokenAlreadyExists");
       });
 
       it("Should return all bridged tokens", async function () {
@@ -2706,15 +2486,15 @@ describe("JuiceSwapGateway", function () {
       });
 
       it("Should revert with InvalidBridgeConfig for zero addresses", async function () {
-        const { gateway, owner } = await loadFixture(deployGatewayWithBalancesFixture);
+        const { gateway } = await loadFixture(deployGatewayWithBalancesFixture);
 
         await expect(
-          gateway.connect(owner).addBridgedToken(ethers.ZeroAddress, ethers.ZeroAddress)
+          gateway.registerBridgedToken(ethers.ZeroAddress, ethers.ZeroAddress)
         ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
       });
 
       it("Should revert with TooManyBridgedTokens when limit exceeded", async function () {
-        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+        const { gateway, jusd } = await loadFixture(deployGatewayWithBridgedTokensFixture);
 
         const MockERC20Factory = await ethers.getContractFactory("MockERC20");
         const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
@@ -2728,7 +2508,8 @@ describe("JuiceSwapGateway", function () {
             BRIDGE_LIMIT,
             BRIDGE_WEEKS
           );
-          await gateway.connect(owner).addBridgedToken(
+          await jusd.setMinter(await bridge.getAddress(), true);
+          await gateway.registerBridgedToken(
             await token.getAddress(),
             await bridge.getAddress()
           );
@@ -2742,9 +2523,10 @@ describe("JuiceSwapGateway", function () {
           BRIDGE_LIMIT,
           BRIDGE_WEEKS
         );
+        await jusd.setMinter(await extraBridge.getAddress(), true);
 
         await expect(
-          gateway.connect(owner).addBridgedToken(
+          gateway.registerBridgedToken(
             await extraToken.getAddress(),
             await extraBridge.getAddress()
           )
@@ -2752,7 +2534,7 @@ describe("JuiceSwapGateway", function () {
       });
 
       it("Should revert with InvalidBridgeConfig when bridge.usd() != token", async function () {
-        const { gateway, owner, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+        const { gateway, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
 
         const MockERC20Factory = await ethers.getContractFactory("MockERC20");
         const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
@@ -2766,10 +2548,11 @@ describe("JuiceSwapGateway", function () {
           BRIDGE_LIMIT,
           BRIDGE_WEEKS
         );
+        await jusd.setMinter(await bridge.getAddress(), true);
 
-        // Try to add wrongToken with a bridge configured for USDC
+        // Try to register wrongToken with a bridge configured for USDC
         await expect(
-          gateway.connect(owner).addBridgedToken(
+          gateway.registerBridgedToken(
             await wrongToken.getAddress(),
             await bridge.getAddress()
           )
@@ -2777,7 +2560,7 @@ describe("JuiceSwapGateway", function () {
       });
 
       it("Should revert with InvalidBridgeConfig when bridge.JUSD() != gateway JUSD", async function () {
-        const { gateway, owner } = await loadFixture(deployGatewayWithBalancesFixture);
+        const { gateway, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
 
         const MockERC20Factory = await ethers.getContractFactory("MockERC20");
         const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
@@ -2791,9 +2574,11 @@ describe("JuiceSwapGateway", function () {
           BRIDGE_LIMIT,
           BRIDGE_WEEKS
         );
+        // Note: Even if we set minter, JUSD mismatch is checked first
+        await jusd.setMinter(await bridge.getAddress(), true);
 
         await expect(
-          gateway.connect(owner).addBridgedToken(
+          gateway.registerBridgedToken(
             await usdc.getAddress(),
             await bridge.getAddress()
           )
@@ -3201,8 +2986,9 @@ describe("JuiceSwapGateway", function () {
           BRIDGE_WEEKS
         );
 
-        // Add to gateway but don't fund the bridge
-        await gateway.connect(owner).addBridgedToken(await newToken.getAddress(), await newBridge.getAddress());
+        // Set bridge as approved minter and register (permissionless)
+        await jusd.setMinter(await newBridge.getAddress(), true);
+        await gateway.registerBridgedToken(await newToken.getAddress(), await newBridge.getAddress());
 
         const status = await gateway.getBridgeStatus(await newToken.getAddress());
 

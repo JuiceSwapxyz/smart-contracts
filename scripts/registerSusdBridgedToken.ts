@@ -14,8 +14,11 @@ import {
 /**
  * Register SUSD (StartUSD) as a bridged token on JuiceSwapGateway
  *
- * This script calls gateway.addBridgedToken(SUSD_ADDRESS, STABLECOIN_BRIDGE_ADDRESS)
+ * This script calls gateway.registerBridgedToken(SUSD_ADDRESS, STABLECOIN_BRIDGE_ADDRESS)
  * to enable SUSD → any token swaps through the Gateway.
+ *
+ * Note: This is permissionless - anyone can call registerBridgedToken IF the bridge
+ * is an approved JUSD minter (checked on-chain via JUSD governance).
  *
  * After registration, the Gateway will automatically:
  * - Convert SUSD → JUSD → svJUSD for input tokens
@@ -121,23 +124,32 @@ async function main() {
   }
 
   // ============================================
-  // 5. VALIDATE SIGNER IS OWNER
+  // 5. VALIDATE BRIDGE IS APPROVED JUSD MINTER
   // ============================================
 
-  // Get owner using Ownable interface
-  const gatewayOwnable = await ethers.getContractAt("Ownable", GATEWAY_ADDRESS, signer);
-  const owner = await gatewayOwnable.owner();
+  const JUSD_ADDRESS = juiceDollarAddresses.JUSD;
+  if (!JUSD_ADDRESS) {
+    throw new Error(`❌ JUSD address not defined for chain ${chainIdNum}`);
+  }
 
-  if (owner.toLowerCase() !== signer.address.toLowerCase()) {
+  // Check if bridge is an approved JUSD minter (required for permissionless registration)
+  const jusd = await ethers.getContractAt(
+    ["function isMinter(address) external view returns (bool)"],
+    JUSD_ADDRESS,
+    signer
+  );
+
+  const isMinter = await jusd.isMinter(BRIDGE_ADDRESS);
+  if (!isMinter) {
     throw new Error(
-      `❌ Signer is not the Gateway owner!\n` +
-      `   Signer: ${signer.address}\n` +
-      `   Owner:  ${owner}\n` +
-      `   Only the owner can register bridged tokens.`
+      `❌ StablecoinBridge is not an approved JUSD minter!\n` +
+      `   Bridge: ${BRIDGE_ADDRESS}\n` +
+      `   The bridge must be approved via JUSD governance before registration.\n` +
+      `   (suggestMinter() → 14+ day veto period → then registration possible)`
     );
   }
 
-  console.log(`✅ Signer is Gateway owner`);
+  console.log(`✅ Bridge is approved JUSD minter`);
   console.log("");
 
   // ============================================
@@ -145,7 +157,7 @@ async function main() {
   // ============================================
 
   console.log("💰 Checking balance...");
-  const estimatedGas = BigInt(100000); // Conservative estimate for addBridgedToken
+  const estimatedGas = BigInt(100000); // Conservative estimate for registerBridgedToken
   const maxFeePerGas = ethers.parseUnits(gasConfig.maxFeePerGas, "gwei");
   const estimatedCost = estimatedGas * maxFeePerGas;
   await validateMinimumBalance(signer.address, estimatedCost);
@@ -155,9 +167,9 @@ async function main() {
   // ============================================
 
   console.log("🚀 Registering SUSD as bridged token...");
-  console.log(`   Calling: gateway.addBridgedToken(${SUSD_ADDRESS}, ${BRIDGE_ADDRESS})`);
+  console.log(`   Calling: gateway.registerBridgedToken(${SUSD_ADDRESS}, ${BRIDGE_ADDRESS})`);
 
-  const tx = await gateway.addBridgedToken(
+  const tx = await gateway.registerBridgedToken(
     SUSD_ADDRESS,
     BRIDGE_ADDRESS,
     formatGasOverrides(gasConfig, 200000)
