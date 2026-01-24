@@ -190,8 +190,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     error TooManyBridgedTokens();
     error NotApprovedMinter(address bridge);
 
-    event BridgedTokenRegistered(address indexed token, address indexed bridge, address indexed registeredBy, uint8 decimals);
-
     /**
      * @notice Initializes the JuiceSwap Gateway for Uniswap V3
      * @param _jusd The address of the JUSD token contract

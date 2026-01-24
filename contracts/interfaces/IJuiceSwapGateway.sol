@@ -89,6 +89,20 @@ interface IJuiceSwapGateway {
     );
 
     /**
+     * @notice Emitted when a bridged token is registered (permissionless)
+     * @param token The bridged stablecoin address
+     * @param bridge The StablecoinBridge contract address
+     * @param registeredBy The address that called registerBridgedToken
+     * @param decimals The token's decimals
+     */
+    event BridgedTokenRegistered(
+        address indexed token,
+        address indexed bridge,
+        address indexed registeredBy,
+        uint8 decimals
+    );
+
+    /**
      * @notice Swaps an exact amount of input tokens for as many output tokens as possible
      * @param tokenIn The address of the input token (use address(0) for native cBTC)
      * @param tokenOut The address of the output token (use address(0) for native cBTC)
