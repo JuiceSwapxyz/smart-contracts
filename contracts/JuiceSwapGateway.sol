@@ -1204,15 +1204,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     }
 
     /**
-     * @dev Checks if a token converts to svJUSD for liquidity operations
-     */
-    function _isConvertibleToSvJusd(address token) internal view returns (bool) {
-        if (token == address(JUSD)) return true;
-        if (address(bridgeConfigs[token].bridge) != address(0)) return true;
-        return false;
-    }
-
-    /**
      * @dev Babylonian square root implementation
      */
     function _sqrt(uint256 x) internal pure returns (uint256 y) {
@@ -1274,8 +1265,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         address userToken0 = isAToken0 ? userTokenA : userTokenB;
         address userToken1 = isAToken0 ? userTokenB : userTokenA;
 
-        bool token0Converts = _isConvertibleToSvJusd(userToken0);
-        bool token1Converts = _isConvertibleToSvJusd(userToken1);
+        bool token0Converts = _isUsdToken(userToken0);
+        bool token1Converts = _isUsdToken(userToken1);
 
         // No conversion needed if neither token is JUSD-based
         if (!token0Converts && !token1Converts) {
