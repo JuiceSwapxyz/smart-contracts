@@ -181,6 +181,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
 
     address private constant NATIVE_TOKEN = address(0);
     uint24 public constant DEFAULT_FEE = 3000; // 0.3% default fee tier (immutable)
+    int24 private constant MIN_TICK = -887272;
+    int24 private constant MAX_TICK = 887272;
 
     error InvalidToken();
     error InvalidAmount();
@@ -826,10 +828,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
             return (address(SV_JUSD), shares);
         } else if (token == address(JUICE)) {
             // JUICE stays JUICE for liquidity (NOT converted to svJUSD)
+            // Note: JUICE is pre-approved to POSITION_MANAGER in constructor with max allowance
             SafeERC20.safeTransferFrom(IERC20(address(JUICE)), msg.sender, address(this), amount);
-            if (IERC20(address(JUICE)).allowance(address(this), address(POSITION_MANAGER)) < amount) {
-                SafeERC20.forceApprove(IERC20(address(JUICE)), address(POSITION_MANAGER), type(uint256).max);
-            }
             return (address(JUICE), amount);
         }
 
@@ -1171,9 +1171,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         int24 tickSpacing = FACTORY.feeAmountTickSpacing(fee);
         if (tickSpacing == 0) revert InvalidFee(fee);
 
-        int24 MIN_TICK = -887272;
-        int24 MAX_TICK = 887272;
-
         tickLower = (MIN_TICK / tickSpacing) * tickSpacing;
         tickUpper = (MAX_TICK / tickSpacing) * tickSpacing;
 
@@ -1197,8 +1194,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         if (tickUpper % tickSpacing != 0) revert InvalidTickRange(tickLower, tickUpper);
 
         // Ticks must be within valid range
-        int24 MIN_TICK = -887272;
-        int24 MAX_TICK = 887272;
         if (tickLower < MIN_TICK || tickUpper > MAX_TICK) {
             revert InvalidTickRange(tickLower, tickUpper);
         }
