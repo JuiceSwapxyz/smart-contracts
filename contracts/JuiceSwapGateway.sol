@@ -394,8 +394,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
 
         (uint256 tokenId, , uint256 amount0, uint256 amount1) = POSITION_MANAGER.mint(params);
 
-        // Map back to A/B order
-        (amountA, amountB) = isAToken0 ? (amount0, amount1) : (amount1, amount0);
+        // Map back to A/B order (in pool token units)
+        (uint256 poolAmountA, uint256 poolAmountB) = isAToken0 ? (amount0, amount1) : (amount1, amount0);
         liquidity = tokenId; // Return NFT tokenId as "liquidity"
 
         // Return excess tokens to user
@@ -408,6 +408,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
 
         _returnExcess(tokenA, actualTokenA, excessA, msg.sender);
         _returnExcess(tokenB, actualTokenB, excessB, msg.sender);
+
+        // Convert to user-facing amounts for return values and event
+        amountA = _toUserAmountForLiquidity(tokenA, poolAmountA);
+        amountB = _toUserAmountForLiquidity(tokenB, poolAmountB);
 
         emit LiquidityAdded(msg.sender, tokenA, tokenB, amountA, amountB, tokenId);
         return (amountA, amountB, liquidity);
@@ -566,6 +570,13 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
             // Swap-style pool: use swap token mapping (JUICE → svJUSD)
             actualTokenA = _getActualToken(tokenA);
             actualTokenB = _getActualToken(tokenB);
+        }
+
+        // Validate tokens match the position
+        bool tokensMatch = (actualTokenA == posToken0 && actualTokenB == posToken1) ||
+            (actualTokenA == posToken1 && actualTokenB == posToken0);
+        if (!tokensMatch) {
+            revert TokenMismatch(posToken0, posToken1, actualTokenA, actualTokenB);
         }
 
         // Calculate minimum amounts for actual tokens
@@ -1527,8 +1538,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
 
         (uint256 tokenId, , uint256 amount0, uint256 amount1) = POSITION_MANAGER.mint(params);
 
-        // Map back to A/B order
-        (amountA, amountB) = isAToken0 ? (amount0, amount1) : (amount1, amount0);
+        // Map back to A/B order (in pool token units)
+        (uint256 poolAmountA, uint256 poolAmountB) = isAToken0 ? (amount0, amount1) : (amount1, amount0);
         liquidity = tokenId;
 
         // Return excess tokens
@@ -1541,6 +1552,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
 
         _returnExcess(tokenA, actualTokenA, excessA, msg.sender);
         _returnExcess(tokenB, actualTokenB, excessB, msg.sender);
+
+        // Convert to user-facing amounts for return values and event
+        amountA = _toUserAmountForLiquidity(tokenA, poolAmountA);
+        amountB = _toUserAmountForLiquidity(tokenB, poolAmountB);
 
         emit LiquidityAdded(msg.sender, tokenA, tokenB, amountA, amountB, tokenId);
 

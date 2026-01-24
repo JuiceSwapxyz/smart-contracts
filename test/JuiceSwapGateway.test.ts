@@ -2160,6 +2160,41 @@ describe("JuiceSwapGateway", function () {
       // NFT should still be owned by user
       expect(await positionManager.ownerOf(tokenId)).to.equal(user1.address);
     });
+
+    it("Should revert when removeLiquidity tokens don't match position", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, juice, positionManager } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const tokenId = 1;
+      const liquidity = 100;
+
+      const juiceAddr = await juice.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+
+      // Create a JUICE/WcBTC position (JUICE liquidity pool)
+      const [token0, token1] = juiceAddr < wcbtcAddr ? [juiceAddr, wcbtcAddr] : [wcbtcAddr, juiceAddr];
+      await positionManager.setPositionData(tokenId, token0, token1, liquidity);
+      await positionManager.mintNFT(user1.address, tokenId);
+      await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
+
+      // Try to remove with wrong tokens (JUSD/WcBTC instead of JUICE/WcBTC)
+      // For JUICE pools, _getActualTokenForLiquidity(JUSD) returns svJUSD
+      // But the position has JUICE, not svJUSD, so TokenMismatch should be raised
+      await expect(
+        gateway.connect(user1).removeLiquidity(
+          tokenId,
+          0,
+          await jusd.getAddress(), // Wrong token - position has JUICE, not svJUSD
+          await wcbtc.getAddress(),
+          0,
+          0,
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "TokenMismatch");
+    });
   });
 
   describe("NFT Handling", function () {
@@ -6965,6 +7000,55 @@ describe("JuiceSwapGateway", function () {
         );
 
       await expect(tx).to.emit(gateway, "LiquidityAdded");
+    });
+
+    it("Should return user-facing JUSD amounts from addLiquidity (not svJUSD)", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, owner, positionManager } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      // First deposit to create shares, then accrue interest
+      await jusd.mint(owner.address, ethers.parseEther("100"));
+      await jusd.approve(await svJusd.getAddress(), ethers.parseEther("100"));
+      await svJusd.deposit(ethers.parseEther("100"), owner.address);
+      await svJusd.accrueInterest(ethers.parseEther("10")); // 10% interest
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const jusdAmount = ethers.parseEther("110"); // Should convert to ~100 svJUSD shares
+      const wcbtcAmount = ethers.parseEther("1");
+
+      // Calculate expected svJUSD shares
+      const svJusdShares = await svJusd.convertToShares(jusdAmount);
+
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr ? [svJusdShares, wcbtcAmount] : [wcbtcAmount, svJusdShares];
+
+      await positionManager.setMintResult(1, 1000, amount0, amount1);
+      await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
+
+      // Call addLiquidity and check return values
+      const result = await gateway
+        .connect(user1)
+        .addLiquidity.staticCall(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          0,
+          0,
+          jusdAmount,
+          wcbtcAmount,
+          0,
+          0,
+          user1.address,
+          deadline
+        );
+
+      // Return value amountA should be close to jusdAmount (in JUSD), not svJusdShares
+      // With 10% interest: 110 JUSD ≈ 100 svJUSD shares, converting back ≈ 110 JUSD
+      expect(result.amountA).to.be.closeTo(jusdAmount, ethers.parseEther("1"));
+      expect(result.amountB).to.equal(wcbtcAmount);
     });
   });
 
