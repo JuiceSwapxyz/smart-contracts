@@ -909,6 +909,57 @@ describe("JuiceSwapGateway", function () {
         );
     });
 
+    it("Should return excess native cBTC when position manager uses less", async function () {
+      const { gateway, user1, jusd, svJusd, wcbtc, positionManager } =
+        await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const jusdAmount = ethers.parseEther("100");
+      const cbtcAmount = ethers.parseEther("2"); // Send 2 cBTC
+
+      // Calculate actual svJUSD shares
+      const svJusdShares = await svJusd.convertToShares(jusdAmount);
+
+      // Mock position manager to only use HALF the cBTC (simulating excess)
+      const halfCbtc = cbtcAmount / 2n;
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr
+        ? [svJusdShares, halfCbtc]
+        : [halfCbtc, svJusdShares];
+      await positionManager.setMintResult(1, 100, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), jusdAmount);
+
+      const cbtcBefore = await ethers.provider.getBalance(user1.address);
+
+      const tx = await gateway.connect(user1).addLiquidity(
+        await jusd.getAddress(),
+        ethers.ZeroAddress, // Native cBTC
+        3000,
+        jusdAmount,
+        cbtcAmount,
+        0,
+        0,
+        user1.address,
+        deadline,
+        { value: cbtcAmount }
+      );
+
+      const receipt = await tx.wait();
+      const gasUsed = receipt!.gasUsed * receipt!.gasPrice;
+      const cbtcAfter = await ethers.provider.getBalance(user1.address);
+
+      // User should receive excess cBTC back (sent 2, used 1, got back ~1)
+      // cbtcAfter = cbtcBefore - cbtcAmount + excessReturned - gasUsed
+      // excessReturned ≈ cbtcAmount / 2 = 1 cBTC
+      const expectedSpent = cbtcAmount / 2n; // ~1 cBTC actually used
+      const actualSpent = cbtcBefore - cbtcAfter - gasUsed;
+
+      // Allow some tolerance for gas estimation
+      expect(actualSpent).to.be.closeTo(expectedSpent, ethers.parseEther("0.01"));
+    });
+
     it("Should return excess tokens to user", async function () {
       const { gateway, user1, jusd, svJusd, wcbtc, positionManager } =
         await loadFixture(deployGatewayWithBalancesFixture);
@@ -2944,6 +2995,115 @@ describe("JuiceSwapGateway", function () {
             deadline
           )
         ).to.be.revertedWithCustomError(gateway, "InvalidTokenPair");
+      });
+
+      it("Should return excess bridged token when position manager uses less", async function () {
+        const { gateway, user1, usdc, wcbtc, svJusd, positionManager, usdcBridge } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const usdcAmount = 2000n * 10n ** 6n; // 2000 USDC (6 decimals)
+        const wcbtcAmount = ethers.parseEther("0.02");
+
+        // Calculate expected svJUSD from full USDC amount
+        const jusdEquivalent = ethers.parseEther("2000"); // 2000 USDC = 2000 JUSD
+        const fullSvJusdShares = await svJusd.convertToShares(jusdEquivalent);
+
+        // Mock position manager to only use HALF the svJUSD (simulating excess)
+        const halfSvJusdShares = fullSvJusdShares / 2n;
+        const halfWcbtc = wcbtcAmount / 2n;
+
+        const svJusdAddr = await svJusd.getAddress();
+        const wcbtcAddr = await wcbtc.getAddress();
+        const [amount0, amount1] = svJusdAddr < wcbtcAddr
+          ? [halfSvJusdShares, halfWcbtc]
+          : [halfWcbtc, halfSvJusdShares];
+        await positionManager.setMintResult(1, 100, amount0, amount1);
+
+        // Set minted amount for bridge burn operation (excess will be burned)
+        await usdcBridge.setMinted(jusdEquivalent);
+
+        await usdc.connect(user1).approve(await gateway.getAddress(), usdcAmount);
+        await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
+
+        const usdcBefore = await usdc.balanceOf(user1.address);
+
+        await gateway.connect(user1).addLiquidity(
+          await usdc.getAddress(),
+          await wcbtc.getAddress(),
+          0,
+          usdcAmount,
+          wcbtcAmount,
+          0,
+          0,
+          user1.address,
+          deadline
+        );
+
+        const usdcAfter = await usdc.balanceOf(user1.address);
+
+        // User should receive excess USDC back (half of input = 1000 USDC)
+        // Initial: usdcBefore, spent 2000, got back ~1000 = usdcBefore - 1000
+        const usdcSpent = usdcBefore - usdcAfter;
+        expect(usdcSpent).to.be.lt(usdcAmount); // Should have received some back
+        expect(usdcSpent).to.be.closeTo(1000n * 10n ** 6n, 100n * 10n ** 6n); // ~1000 USDC used
+      });
+
+      it("Should return excess bridged token (USDT) when increasing liquidity", async function () {
+        const { gateway, user1, usdt, wcbtc, svJusd, positionManager, usdtBridge } =
+          await loadFixture(deployGatewayWithBridgedTokensFixture);
+
+        const deadline = (await time.latest()) + DEADLINE_OFFSET;
+        const tokenId = 1;
+        const usdtAmount = 2000n * 10n ** 6n; // 2000 USDT
+        const wcbtcAmount = ethers.parseEther("0.02");
+
+        // Setup position with correct token ordering
+        const svJusdAddr = await svJusd.getAddress();
+        const wcbtcAddr = await wcbtc.getAddress();
+        const [token0, token1] = svJusdAddr < wcbtcAddr
+          ? [svJusdAddr, wcbtcAddr]
+          : [wcbtcAddr, svJusdAddr];
+        await positionManager.setPositionData(tokenId, token0, token1, 100);
+        await positionManager.mintNFT(user1.address, tokenId);
+        await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
+
+        // Mock increase to use only half
+        const jusdEquivalent = ethers.parseEther("2000");
+        const fullSvJusdShares = await svJusd.convertToShares(jusdEquivalent);
+        const halfSvJusdShares = fullSvJusdShares / 2n;
+        const halfWcbtc = wcbtcAmount / 2n;
+
+        const [inc0, inc1] = svJusdAddr < wcbtcAddr
+          ? [halfSvJusdShares, halfWcbtc]
+          : [halfWcbtc, halfSvJusdShares];
+        await positionManager.setIncreaseResult(50, inc0, inc1);
+
+        // Set minted for bridge burn
+        await usdtBridge.setMinted(jusdEquivalent);
+
+        await usdt.connect(user1).approve(await gateway.getAddress(), usdtAmount);
+        await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
+
+        const usdtBefore = await usdt.balanceOf(user1.address);
+
+        await gateway.connect(user1).increaseLiquidity(
+          tokenId,
+          await usdt.getAddress(),
+          await wcbtc.getAddress(),
+          usdtAmount,
+          wcbtcAmount,
+          0,
+          0,
+          deadline
+        );
+
+        const usdtAfter = await usdt.balanceOf(user1.address);
+
+        // User should receive excess USDT back
+        const usdtSpent = usdtBefore - usdtAfter;
+        expect(usdtSpent).to.be.lt(usdtAmount);
+        expect(usdtSpent).to.be.closeTo(1000n * 10n ** 6n, 100n * 10n ** 6n);
       });
     });
 
