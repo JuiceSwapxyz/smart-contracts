@@ -7077,7 +7077,7 @@ describe("JuiceSwapGateway", function () {
   // ==================== Additional Error Path Tests ====================
 
   describe("Slippage Protection in increaseLiquidity", function () {
-    it("Should revert with SlippageExceeded when amountA is below minimum", async function () {
+    it("Should revert with InsufficientOutput when amountA is below minimum", async function () {
       const { gateway, user1, jusd, wcbtc, svJusd, positionManager } = await loadFixture(
         deployGatewayWithBalancesFixture
       );
@@ -7129,7 +7129,167 @@ describe("JuiceSwapGateway", function () {
           amount, // amountBMin = full amount
           deadline
         )
-      ).to.be.revertedWithCustomError(gateway, "SlippageExceeded");
+      ).to.be.revertedWithCustomError(gateway, "InsufficientOutput");
+    });
+  });
+
+  describe("Slippage Protection in addLiquidity", function () {
+    it("Should revert with InsufficientOutput when amountA is below minimum after conversion", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, positionManager } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("100");
+
+      // Setup: Mock position manager to return amounts that after _toUserAmountForLiquidity
+      // conversion will fall below the user's specified minimum
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+
+      // Set very low return amounts so that converted amounts fall below minimum
+      const lowAmount = amount / 10n;
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr ? [lowAmount, lowAmount] : [lowAmount, lowAmount];
+      await positionManager.setMintResult(1, 1000, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount * 2n);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), amount * 2n);
+
+      // Call addLiquidity with high minimum that won't be satisfied after conversion
+      await expect(
+        gateway.connect(user1).addLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          0,
+          0,
+          amount,
+          amount,
+          amount, // amountAMin = full amount (will fail since PM returns lowAmount)
+          amount, // amountBMin = full amount
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "InsufficientOutput");
+    });
+
+    it("Should revert with InsufficientOutput when amountB is below minimum after conversion", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, positionManager } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("100");
+
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+
+      // Return full amount for token A but low for token B
+      const lowAmount = amount / 10n;
+      const svJusdShares = await svJusd.convertToShares(amount);
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr ? [svJusdShares, lowAmount] : [lowAmount, svJusdShares];
+      await positionManager.setMintResult(1, 1000, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount * 2n);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), amount * 2n);
+
+      // Only set high minimum for amountB
+      await expect(
+        gateway.connect(user1).addLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          0,
+          0,
+          amount,
+          amount,
+          0, // amountAMin = 0 (don't care)
+          amount, // amountBMin = full amount (will fail)
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "InsufficientOutput");
+    });
+  });
+
+  describe("Slippage Protection in createPoolAndAddLiquidity", function () {
+    it("Should revert with InsufficientOutput when amountA is below minimum after conversion", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, positionManager } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("100");
+      const sqrtPriceX96 = BigInt("79228162514264337593543950336"); // 1:1 price
+
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+
+      // Set very low return amounts so that converted amounts fall below minimum
+      const lowAmount = amount / 10n;
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr ? [lowAmount, lowAmount] : [lowAmount, lowAmount];
+      await positionManager.setMintResult(1, 1000, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount * 2n);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), amount * 2n);
+
+      // Call createPoolAndAddLiquidity with high minimum that won't be satisfied
+      await expect(
+        gateway.connect(user1).createPoolAndAddLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          sqrtPriceX96,
+          0, // full range
+          0,
+          amount,
+          amount,
+          amount, // amountAMin = full amount (will fail)
+          amount, // amountBMin = full amount
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "InsufficientOutput");
+    });
+
+    it("Should revert with InsufficientOutput when amountB is below minimum after conversion", async function () {
+      const { gateway, user1, jusd, wcbtc, svJusd, positionManager } = await loadFixture(
+        deployGatewayWithBalancesFixture
+      );
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("100");
+      const sqrtPriceX96 = BigInt("79228162514264337593543950336"); // 1:1 price
+
+      const svJusdAddr = await svJusd.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+
+      // Return full amount for token A but low for token B
+      const lowAmount = amount / 10n;
+      const svJusdShares = await svJusd.convertToShares(amount);
+      const [amount0, amount1] = svJusdAddr < wcbtcAddr ? [svJusdShares, lowAmount] : [lowAmount, svJusdShares];
+      await positionManager.setMintResult(1, 1000, amount0, amount1);
+
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount * 2n);
+      await wcbtc.connect(user1).approve(await gateway.getAddress(), amount * 2n);
+
+      // Only set high minimum for amountB
+      await expect(
+        gateway.connect(user1).createPoolAndAddLiquidity(
+          await jusd.getAddress(),
+          await wcbtc.getAddress(),
+          3000,
+          sqrtPriceX96,
+          0,
+          0,
+          amount,
+          amount,
+          0, // amountAMin = 0 (don't care)
+          amount, // amountBMin = full amount (will fail)
+          user1.address,
+          deadline
+        )
+      ).to.be.revertedWithCustomError(gateway, "InsufficientOutput");
     });
   });
 

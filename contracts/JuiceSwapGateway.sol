@@ -187,7 +187,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     error InvalidToken();
     error InvalidAmount();
     error InsufficientOutput();
-    error SlippageExceeded();
     error TransferFailed();
     error DeadlineExpired();
     error DirectTransferNotAccepted();
@@ -415,6 +414,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         amountA = _toUserAmountForLiquidity(tokenA, poolAmountA);
         amountB = _toUserAmountForLiquidity(tokenB, poolAmountB);
 
+        // Verify final amounts meet user's minimums after all conversions
+        if (amountA < amountAMin) revert InsufficientOutput();
+        if (amountB < amountBMin) revert InsufficientOutput();
+
         emit LiquidityAdded(msg.sender, tokenA, tokenB, amountA, amountB, tokenId);
         return (amountA, amountB, liquidity);
     }
@@ -494,10 +497,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         // Map back to A/B order
         (amountA, amountB) = isAToken0 ? (amount0, amount1) : (amount1, amount0);
 
-        // Defense-in-depth slippage check (PM enforces internally, kept for non-conforming implementations)
-        if (amountA < actualAmountAMin) revert SlippageExceeded();
-        if (amountB < actualAmountBMin) revert SlippageExceeded();
-
         // Return excess tokens to user
         uint256 excessA = isAToken0
             ? (actualAmountADesired > amount0 ? actualAmountADesired - amount0 : 0)
@@ -513,6 +512,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         // (amountA/amountB are in svJUSD terms if user passed JUSD or bridged USD, or JUICE if JUICE liquidity)
         uint256 userAmountA = _toUserAmountForLiquidity(tokenA, amountA);
         uint256 userAmountB = _toUserAmountForLiquidity(tokenB, amountB);
+
+        // Verify final amounts meet user's minimums after all conversions
+        if (userAmountA < amountAMin) revert InsufficientOutput();
+        if (userAmountB < amountBMin) revert InsufficientOutput();
 
         // Return NFT to user
         IERC721(address(POSITION_MANAGER)).safeTransferFrom(address(this), msg.sender, tokenId);
@@ -1551,6 +1554,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         // Convert to user-facing amounts for return values and event
         amountA = _toUserAmountForLiquidity(tokenA, poolAmountA);
         amountB = _toUserAmountForLiquidity(tokenB, poolAmountB);
+
+        // Verify final amounts meet user's minimums after all conversions
+        if (amountA < amountAMin) revert InsufficientOutput();
+        if (amountB < amountBMin) revert InsufficientOutput();
 
         emit LiquidityAdded(msg.sender, tokenA, tokenB, amountA, amountB, tokenId);
 
