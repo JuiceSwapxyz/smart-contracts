@@ -526,8 +526,9 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         address nftOwner = IERC721(address(POSITION_MANAGER)).ownerOf(tokenId);
         if (nftOwner != msg.sender) revert NotNFTOwner(msg.sender, nftOwner);
 
-        // Get position info to determine liquidity amount
-        (, , , , , , , uint128 positionLiquidity, , , , ) = POSITION_MANAGER.positions(tokenId);
+        // Get position info including actual tokens in the pool
+        (, , address posToken0, address posToken1, , , , uint128 positionLiquidity, , , , ) = POSITION_MANAGER
+            .positions(tokenId);
 
         // Use specified amount or full position liquidity
         uint128 liquidityAmount = liquidityToRemove == 0 ? positionLiquidity : liquidityToRemove;
@@ -540,12 +541,33 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         // Transfer NFT to this contract
         IERC721(address(POSITION_MANAGER)).transferFrom(msg.sender, address(this), tokenId);
 
-        address actualTokenA = _getActualToken(tokenA);
-        address actualTokenB = _getActualToken(tokenB);
+        // Determine if position has JUICE (JUICE liquidity pool) or svJUSD (swap-style pool)
+        // This affects which conversion function to use
+        bool positionHasJuice = posToken0 == address(JUICE) || posToken1 == address(JUICE);
+
+        // Map user tokens to actual position tokens based on what the position contains
+        address actualTokenA;
+        address actualTokenB;
+        if (positionHasJuice) {
+            // JUICE liquidity pool: JUICE stays JUICE
+            actualTokenA = _getActualTokenForLiquidity(tokenA);
+            actualTokenB = _getActualTokenForLiquidity(tokenB);
+        } else {
+            // Swap-style pool: use swap token mapping (JUICE → svJUSD)
+            actualTokenA = _getActualToken(tokenA);
+            actualTokenB = _getActualToken(tokenB);
+        }
 
         // Calculate minimum amounts for actual tokens
-        uint256 actualAmountAMin = _toActualMinAmount(tokenA, amountAMin);
-        uint256 actualAmountBMin = _toActualMinAmount(tokenB, amountBMin);
+        uint256 actualAmountAMin;
+        uint256 actualAmountBMin;
+        if (positionHasJuice) {
+            actualAmountAMin = _toActualMinAmountForLiquidity(tokenA, amountAMin);
+            actualAmountBMin = _toActualMinAmountForLiquidity(tokenB, amountBMin);
+        } else {
+            actualAmountAMin = _toActualMinAmount(tokenA, amountAMin);
+            actualAmountBMin = _toActualMinAmount(tokenB, amountBMin);
+        }
 
         // Determine token order
         bool isAToken0 = actualTokenA < actualTokenB;
@@ -579,8 +601,16 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         (uint256 actualAmountA, uint256 actualAmountB) = isAToken0 ? (amount0, amount1) : (amount1, amount0);
 
         // Convert back to user-facing tokens
-        amountA = _handleTokenOut(tokenA, actualAmountA, to);
-        amountB = _handleTokenOut(tokenB, actualAmountB, to);
+        // Use appropriate handler based on position type
+        if (positionHasJuice) {
+            // JUICE liquidity pool: JUICE transferred directly
+            amountA = _handleTokenOutForLiquidity(tokenA, actualAmountA, to);
+            amountB = _handleTokenOutForLiquidity(tokenB, actualAmountB, to);
+        } else {
+            // Swap-style pool: convert svJUSD → user token (JUICE via invest)
+            amountA = _handleTokenOut(tokenA, actualAmountA, to);
+            amountB = _handleTokenOut(tokenB, actualAmountB, to);
+        }
 
         // Verify final amounts meet user's minimums after all conversions (JUICE1-4 fix)
         if (amountA < amountAMin) revert InsufficientOutput();
@@ -826,6 +856,45 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
             // Burn JUSD via bridge to get bridged USD sent to recipient
             config.bridge.burnAndSend(to, jusdAmount);
             // Return amount in bridged USD decimals
+            return _jusdToBridgedAmount(jusdAmount, config.decimals);
+        } else {
+            // Other tokens - direct transfer
+            SafeERC20.safeTransfer(IERC20(token), to, actualAmount);
+            return actualAmount;
+        }
+    }
+
+    /**
+     * @dev Handles output token conversion for liquidity operations
+     * @notice Unlike _handleTokenOut, JUICE is transferred directly (not converted from svJUSD)
+     */
+    function _handleTokenOutForLiquidity(
+        address token,
+        uint256 actualAmount,
+        address to
+    ) internal returns (uint256 userAmount) {
+        if (token == NATIVE_TOKEN) {
+            // WcBTC → Native cBTC
+            WCBTC.withdraw(actualAmount);
+            (bool success, ) = to.call{value: actualAmount}("");
+            if (!success) revert TransferFailed();
+            return actualAmount;
+        } else if (token == address(JUSD)) {
+            // svJUSD → JUSD
+            uint256 jusdAmount = SV_JUSD.redeem(actualAmount, to, address(this));
+            return jusdAmount;
+        } else if (token == address(JUICE)) {
+            // JUICE stays JUICE for liquidity - transfer directly
+            SafeERC20.safeTransfer(IERC20(address(JUICE)), to, actualAmount);
+            return actualAmount;
+        }
+
+        // Check if token is a bridged stablecoin
+        BridgeConfig storage config = bridgeConfigs[token];
+        if (address(config.bridge) != address(0)) {
+            // svJUSD → JUSD → Bridged USD (e.g., USDC.e, USDT.e, ctUSD)
+            uint256 jusdAmount = SV_JUSD.redeem(actualAmount, address(this), address(this));
+            config.bridge.burnAndSend(to, jusdAmount);
             return _jusdToBridgedAmount(jusdAmount, config.decimals);
         } else {
             // Other tokens - direct transfer

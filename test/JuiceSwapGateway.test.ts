@@ -2099,6 +2099,67 @@ describe("JuiceSwapGateway", function () {
         .to.be.revertedWithCustomError(gateway, "InsufficientLiquidity")
         .withArgs(liquidityToRemove, positionLiquidity);
     });
+
+    it("Should remove JUICE liquidity successfully (JUICE transferred directly)", async function () {
+      const { gateway, user1, juice, wcbtc, positionManager } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const tokenId = 1;
+      const liquidity = 100;
+      const juiceAmount = ethers.parseEther("100");
+      const wcbtcAmount = ethers.parseEther("1");
+
+      const juiceAddr = await juice.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+
+      // Token ordering: Uniswap V3 requires token0 < token1
+      // For JUICE liquidity pools, JUICE stays as JUICE (not converted to svJUSD)
+      const [token0, token1] = juiceAddr < wcbtcAddr ? [juiceAddr, wcbtcAddr] : [wcbtcAddr, juiceAddr];
+      const isJuiceToken0 = juiceAddr < wcbtcAddr;
+
+      await positionManager.setPositionData(tokenId, token0, token1, liquidity);
+      await positionManager.setDecreaseResult(
+        isJuiceToken0 ? juiceAmount : wcbtcAmount,
+        isJuiceToken0 ? wcbtcAmount : juiceAmount
+      );
+
+      // Fund position manager with JUICE and WcBTC (NOT svJUSD!)
+      const posManagerAddr = await positionManager.getAddress();
+      await juice.mint(posManagerAddr, juiceAmount);
+      await wcbtc.deposit({ value: wcbtcAmount });
+      await wcbtc.transfer(posManagerAddr, wcbtcAmount);
+
+      await positionManager.mintNFT(user1.address, tokenId);
+      await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
+
+      const juiceBalanceBefore = await juice.balanceOf(user1.address);
+      const wcbtcBalanceBefore = await wcbtc.balanceOf(user1.address);
+
+      const tx = await gateway.connect(user1).removeLiquidity(
+        tokenId,
+        0, // Remove all liquidity
+        await juice.getAddress(),
+        await wcbtc.getAddress(),
+        0,
+        0,
+        user1.address,
+        deadline
+      );
+
+      await expect(tx)
+        .to.emit(gateway, "LiquidityRemoved")
+        .withArgs(user1.address, await juice.getAddress(), await wcbtc.getAddress(), anyValue, anyValue, tokenId);
+
+      // User should receive JUICE directly (not converted from svJUSD)
+      const juiceBalanceAfter = await juice.balanceOf(user1.address);
+      const wcbtcBalanceAfter = await wcbtc.balanceOf(user1.address);
+
+      expect(juiceBalanceAfter).to.be.gt(juiceBalanceBefore);
+      expect(wcbtcBalanceAfter).to.be.gt(wcbtcBalanceBefore);
+
+      // NFT should still be owned by user
+      expect(await positionManager.ownerOf(tokenId)).to.equal(user1.address);
+    });
   });
 
   describe("NFT Handling", function () {
