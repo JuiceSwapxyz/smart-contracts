@@ -18,7 +18,12 @@ interface IWrappedCBTC is IERC20 {
 interface IEquity is IERC20 {
     function invest(uint256 amount, uint256 expectedShares) external returns (uint256);
     function redeem(address target, uint256 shares) external returns (uint256);
-    function redeemFrom(address owner, address target, uint256 shares, uint256 expectedProceeds) external returns (uint256);
+    function redeemFrom(
+        address owner,
+        address target,
+        uint256 shares,
+        uint256 expectedProceeds
+    ) external returns (uint256);
     function calculateProceeds(uint256 shares) external view returns (uint256);
     function calculateShares(uint256 investment) external view returns (uint256);
 }
@@ -70,10 +75,9 @@ interface INonfungiblePositionManager {
         uint256 deadline;
     }
 
-    function mint(MintParams calldata params)
-        external
-        payable
-        returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+    function mint(
+        MintParams calldata params
+    ) external payable returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
 
     struct IncreaseLiquidityParams {
         uint256 tokenId;
@@ -84,10 +88,9 @@ interface INonfungiblePositionManager {
         uint256 deadline;
     }
 
-    function increaseLiquidity(IncreaseLiquidityParams calldata params)
-        external
-        payable
-        returns (uint128 liquidity, uint256 amount0, uint256 amount1);
+    function increaseLiquidity(
+        IncreaseLiquidityParams calldata params
+    ) external payable returns (uint128 liquidity, uint256 amount0, uint256 amount1);
 
     struct DecreaseLiquidityParams {
         uint256 tokenId;
@@ -97,10 +100,9 @@ interface INonfungiblePositionManager {
         uint256 deadline;
     }
 
-    function decreaseLiquidity(DecreaseLiquidityParams calldata params)
-        external
-        payable
-        returns (uint256 amount0, uint256 amount1);
+    function decreaseLiquidity(
+        DecreaseLiquidityParams calldata params
+    ) external payable returns (uint256 amount0, uint256 amount1);
 
     struct CollectParams {
         uint256 tokenId;
@@ -111,7 +113,9 @@ interface INonfungiblePositionManager {
 
     function collect(CollectParams calldata params) external payable returns (uint256 amount0, uint256 amount1);
 
-    function positions(uint256 tokenId)
+    function positions(
+        uint256 tokenId
+    )
         external
         view
         returns (
@@ -182,6 +186,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     error TokenMismatch(address expected0, address expected1, address provided0, address provided1);
     error InsufficientLiquidity(uint128 requested, uint128 available);
     error InvalidTokenPair(address tokenA, address tokenB);
+    error InvalidTickRange(int24 tickLower, int24 tickUpper);
     error BridgedTokenAlreadyExists(address token);
     error BridgedTokenNotFound(address token);
     error InvalidBridgeConfig();
@@ -289,13 +294,15 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     }
 
     /**
-     * @notice Adds liquidity with automatic JUSD→svJUSD conversion
-     * @dev For Uniswap V3, this creates a full-range position. For custom ranges, use Position Manager directly.
+     * @notice Adds liquidity with automatic JUSD→svJUSD conversion and optional custom tick range
+     * @dev If tickLower == tickUpper, creates a full-range position. Otherwise validates and uses custom ticks.
      */
     function addLiquidity(
         address tokenA,
         address tokenB,
         uint24 fee,
+        int24 tickLower,
+        int24 tickUpper,
         uint256 amountADesired,
         uint256 amountBDesired,
         uint256 amountAMin,
@@ -322,28 +329,35 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         bool isAToken0 = actualTokenA < actualTokenB;
 
         // Ensure token0 < token1 (Uniswap V3 requirement)
-        (address token0, address token1, uint256 amount0Desired, uint256 amount1Desired) =
-            isAToken0
-                ? (actualTokenA, actualTokenB, actualAmountADesired, actualAmountBDesired)
-                : (actualTokenB, actualTokenA, actualAmountBDesired, actualAmountADesired);
+        (address token0, address token1, uint256 amount0Desired, uint256 amount1Desired) = isAToken0
+            ? (actualTokenA, actualTokenB, actualAmountADesired, actualAmountBDesired)
+            : (actualTokenB, actualTokenA, actualAmountBDesired, actualAmountADesired);
 
         // Calculate minimum amounts for actual tokens
         uint256 actualAmountAMin = _toActualMinAmount(tokenA, amountAMin);
         uint256 actualAmountBMin = _toActualMinAmount(tokenB, amountBMin);
 
-        (uint256 amount0Min, uint256 amount1Min) =
-            isAToken0
-                ? (actualAmountAMin, actualAmountBMin)
-                : (actualAmountBMin, actualAmountAMin);
+        (uint256 amount0Min, uint256 amount1Min) = isAToken0
+            ? (actualAmountAMin, actualAmountBMin)
+            : (actualAmountBMin, actualAmountAMin);
 
-        (int24 tickLower, int24 tickUpper) = _getFullRangeTicks(effectiveFee);
+        // Determine tick range: if tickLower == tickUpper (sentinel), use full range
+        int24 actualTickLower;
+        int24 actualTickUpper;
+        if (tickLower == tickUpper) {
+            (actualTickLower, actualTickUpper) = _getFullRangeTicks(effectiveFee);
+        } else {
+            _validateTicks(tickLower, tickUpper, effectiveFee);
+            actualTickLower = tickLower;
+            actualTickUpper = tickUpper;
+        }
 
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
             token0: token0,
             token1: token1,
             fee: effectiveFee,
-            tickLower: tickLower,
-            tickUpper: tickUpper,
+            tickLower: actualTickLower,
+            tickUpper: actualTickUpper,
             amount0Desired: amount0Desired,
             amount1Desired: amount1Desired,
             amount0Min: amount0Min,
@@ -394,12 +408,12 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         if (nftOwner != msg.sender) revert NotNFTOwner(msg.sender, nftOwner);
 
         // Validate tokens match position BEFORE any transfers (positions() is a view function)
-        (,, address posToken0, address posToken1,,,,,,,,) = POSITION_MANAGER.positions(tokenId);
+        (, , address posToken0, address posToken1, , , , , , , , ) = POSITION_MANAGER.positions(tokenId);
         address expectedTokenA = _getActualToken(tokenA);
         address expectedTokenB = _getActualToken(tokenB);
 
         bool tokensMatch = (expectedTokenA == posToken0 && expectedTokenB == posToken1) ||
-                           (expectedTokenA == posToken1 && expectedTokenB == posToken0);
+            (expectedTokenA == posToken1 && expectedTokenB == posToken0);
         if (!tokensMatch) {
             revert TokenMismatch(posToken0, posToken1, expectedTokenA, expectedTokenB);
         }
@@ -418,8 +432,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         // Cache token ordering comparison
         bool isAToken0 = actualTokenA < actualTokenB;
 
-        INonfungiblePositionManager.IncreaseLiquidityParams memory params =
-            INonfungiblePositionManager.IncreaseLiquidityParams({
+        INonfungiblePositionManager.IncreaseLiquidityParams memory params = INonfungiblePositionManager
+            .IncreaseLiquidityParams({
                 tokenId: tokenId,
                 amount0Desired: isAToken0 ? actualAmountADesired : actualAmountBDesired,
                 amount1Desired: isAToken0 ? actualAmountBDesired : actualAmountADesired,
@@ -484,7 +498,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         if (nftOwner != msg.sender) revert NotNFTOwner(msg.sender, nftOwner);
 
         // Get position info to determine liquidity amount
-        (,,,,,,, uint128 positionLiquidity,,,,) = POSITION_MANAGER.positions(tokenId);
+        (, , , , , , , uint128 positionLiquidity, , , , ) = POSITION_MANAGER.positions(tokenId);
 
         // Use specified amount or full position liquidity
         uint128 liquidityAmount = liquidityToRemove == 0 ? positionLiquidity : liquidityToRemove;
@@ -511,8 +525,8 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
             : (actualAmountBMin, actualAmountAMin);
 
         // Decrease liquidity (partial or full)
-        INonfungiblePositionManager.DecreaseLiquidityParams memory decreaseParams =
-            INonfungiblePositionManager.DecreaseLiquidityParams({
+        INonfungiblePositionManager.DecreaseLiquidityParams memory decreaseParams = INonfungiblePositionManager
+            .DecreaseLiquidityParams({
                 tokenId: tokenId,
                 liquidity: liquidityAmount,
                 amount0Min: amount0Min,
@@ -523,13 +537,12 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         (uint256 amount0, uint256 amount1) = POSITION_MANAGER.decreaseLiquidity(decreaseParams);
 
         // Collect tokens
-        INonfungiblePositionManager.CollectParams memory collectParams =
-            INonfungiblePositionManager.CollectParams({
-                tokenId: tokenId,
-                recipient: address(this),
-                amount0Max: type(uint128).max,
-                amount1Max: type(uint128).max
-            });
+        INonfungiblePositionManager.CollectParams memory collectParams = INonfungiblePositionManager.CollectParams({
+            tokenId: tokenId,
+            recipient: address(this),
+            amount0Max: type(uint128).max,
+            amount1Max: type(uint128).max
+        });
 
         (amount0, amount1) = POSITION_MANAGER.collect(collectParams);
 
@@ -598,14 +611,15 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
 
         // Check if token is supported
         if (address(config.bridge) == address(0)) {
-            return BridgeStatus({
-                canMint: false,
-                canBurn: false,
-                mintCapacity: 0,
-                burnCapacity: 0,
-                mintBlockReason: "Token not supported",
-                burnBlockReason: "Token not supported"
-            });
+            return
+                BridgeStatus({
+                    canMint: false,
+                    canBurn: false,
+                    mintCapacity: 0,
+                    burnCapacity: 0,
+                    mintBlockReason: "Token not supported",
+                    burnBlockReason: "Token not supported"
+                });
         }
 
         IStablecoinBridge bridge = config.bridge;
@@ -641,14 +655,15 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         bool canBurn = bridgeBalance > 0;
         string memory burnReason = canBurn ? "" : "Insufficient bridge liquidity";
 
-        return BridgeStatus({
-            canMint: canMint,
-            canBurn: canBurn,
-            mintCapacity: mintCapacity,
-            burnCapacity: bridgeBalance,  // In bridged token decimals
-            mintBlockReason: mintReason,
-            burnBlockReason: burnReason
-        });
+        return
+            BridgeStatus({
+                canMint: canMint,
+                canBurn: canBurn,
+                mintCapacity: mintCapacity,
+                burnCapacity: bridgeBalance, // In bridged token decimals
+                mintBlockReason: mintReason,
+                burnBlockReason: burnReason
+            });
     }
 
     // ==================== Internal Functions ====================
@@ -656,7 +671,10 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     /**
      * @dev Handles input token conversion and returns the actual token to use in swaps
      */
-    function _handleTokenIn(address token, uint256 amount) internal returns (address actualToken, uint256 actualAmount) {
+    function _handleTokenIn(
+        address token,
+        uint256 amount
+    ) internal returns (address actualToken, uint256 actualAmount) {
         if (token == NATIVE_TOKEN) {
             // Native cBTC → WcBTC
             if (msg.value != amount) revert InvalidAmount();
@@ -939,6 +957,30 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     }
 
     /**
+     * @dev Validates custom tick range for concentrated liquidity positions
+     * @param tickLower The lower bound of the position's tick range
+     * @param tickUpper The upper bound of the position's tick range
+     * @param fee The fee tier to determine tick spacing
+     */
+    function _validateTicks(int24 tickLower, int24 tickUpper, uint24 fee) internal view {
+        if (tickLower >= tickUpper) revert InvalidTickRange(tickLower, tickUpper);
+
+        int24 tickSpacing = FACTORY.feeAmountTickSpacing(fee);
+        if (tickSpacing == 0) revert InvalidFee(fee);
+
+        // Ticks must be aligned to tickSpacing
+        if (tickLower % tickSpacing != 0) revert InvalidTickRange(tickLower, tickUpper);
+        if (tickUpper % tickSpacing != 0) revert InvalidTickRange(tickLower, tickUpper);
+
+        // Ticks must be within valid range
+        int24 MIN_TICK = -887272;
+        int24 MAX_TICK = 887272;
+        if (tickLower < MIN_TICK || tickUpper > MAX_TICK) {
+            revert InvalidTickRange(tickLower, tickUpper);
+        }
+    }
+
+    /**
      * @dev Returns excess tokens to user after adding liquidity
      */
     function _returnExcess(address userToken, address actualToken, uint256 excessAmount, address to) internal {
@@ -998,10 +1040,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         if (!IJuiceDollar(address(JUSD)).isMinter(bridge)) revert NotApprovedMinter(bridge);
 
         uint8 decimals = IERC20Metadata(token).decimals();
-        bridgeConfigs[token] = BridgeConfig({
-            bridge: IStablecoinBridge(bridge),
-            decimals: decimals
-        });
+        bridgeConfigs[token] = BridgeConfig({bridge: IStablecoinBridge(bridge), decimals: decimals});
         bridgedTokens.push(token);
 
         // Approve bridged token to bridge for mint operations

@@ -13,10 +13,10 @@ pragma solidity ^0.8.20;
 interface IJuiceSwapGateway {
     /// @notice Status information for a bridged stablecoin's bridge
     struct BridgeStatus {
-        bool canMint;           // Can deposit bridged token (mint JUSD)?
-        bool canBurn;           // Can withdraw to bridged token (burn JUSD)?
-        uint256 mintCapacity;   // Remaining JUSD that can be minted (in JUSD decimals)
-        uint256 burnCapacity;   // Available bridged token for burns (in bridged token decimals)
+        bool canMint; // Can deposit bridged token (mint JUSD)?
+        bool canBurn; // Can withdraw to bridged token (burn JUSD)?
+        uint256 mintCapacity; // Remaining JUSD that can be minted (in JUSD decimals)
+        uint256 burnCapacity; // Available bridged token for burns (in bridged token decimals)
         string mintBlockReason; // Reason why minting is blocked (empty if canMint)
         string burnBlockReason; // Reason why burning is blocked (empty if canBurn)
     }
@@ -124,10 +124,12 @@ interface IJuiceSwapGateway {
     ) external payable returns (uint256 amountOut);
 
     /**
-     * @notice Adds liquidity to a token pair pool
+     * @notice Adds liquidity to a token pair pool with optional custom tick range
      * @param tokenA The address of the first token (use address(0) for native cBTC)
      * @param tokenB The address of the second token
      * @param fee The Uniswap V3 fee tier (100 = 0.01%, 500 = 0.05%, 3000 = 0.3%, 10000 = 1%)
+     * @param tickLower The lower tick of the position range (if tickLower == tickUpper, uses full range)
+     * @param tickUpper The upper tick of the position range (if tickLower == tickUpper, uses full range)
      * @param amountADesired The desired amount of tokenA to add
      * @param amountBDesired The desired amount of tokenB to add
      * @param amountAMin The minimum amount of tokenA to add (slippage protection)
@@ -142,6 +144,8 @@ interface IJuiceSwapGateway {
         address tokenA,
         address tokenB,
         uint24 fee,
+        int24 tickLower,
+        int24 tickUpper,
         uint256 amountADesired,
         uint256 amountBDesired,
         uint256 amountAMin,
