@@ -213,22 +213,10 @@ describe("JuiceSwapGateway - Complete Swap Matrix", function () {
     await jusd.setMinter(await ctUsdBridge.getAddress(), true);
 
     // Register bridged tokens
-    await gateway.registerBridgedToken(
-      await usdt.getAddress(),
-      await usdtBridge.getAddress()
-    );
-    await gateway.registerBridgedToken(
-      await usdc.getAddress(),
-      await usdcBridge.getAddress()
-    );
-    await gateway.registerBridgedToken(
-      await susd.getAddress(),
-      await susdBridge.getAddress()
-    );
-    await gateway.registerBridgedToken(
-      await ctUsd.getAddress(),
-      await ctUsdBridge.getAddress()
-    );
+    await gateway.registerBridgedToken(await usdtBridge.getAddress());
+    await gateway.registerBridgedToken(await usdcBridge.getAddress());
+    await gateway.registerBridgedToken(await susdBridge.getAddress());
+    await gateway.registerBridgedToken(await ctUsdBridge.getAddress());
 
     // Fund bridges with tokens for burn operations
     const bridgeFunding6Dec = 100_000_000n * 10n ** 6n; // 100M (6 decimals)

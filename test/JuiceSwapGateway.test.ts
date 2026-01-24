@@ -2622,9 +2622,9 @@ describe("JuiceSwapGateway", function () {
       await jusd.setMinter(await ctUsdBridge.getAddress(), true);
 
       // Register bridged tokens on gateway (permissionless - anyone can call if bridge is minter)
-      await gateway.registerBridgedToken(await usdc.getAddress(), await usdcBridge.getAddress());
-      await gateway.registerBridgedToken(await usdt.getAddress(), await usdtBridge.getAddress());
-      await gateway.registerBridgedToken(await ctUsd.getAddress(), await ctUsdBridge.getAddress());
+      await gateway.registerBridgedToken(await usdcBridge.getAddress());
+      await gateway.registerBridgedToken(await usdtBridge.getAddress());
+      await gateway.registerBridgedToken(await ctUsdBridge.getAddress());
 
       return {
         owner,
@@ -2667,10 +2667,7 @@ describe("JuiceSwapGateway", function () {
 
         // Anyone can register (permissionless)
         await expect(
-          gateway.connect(user1).registerBridgedToken(
-            await newToken.getAddress(),
-            await newBridge.getAddress()
-          )
+          gateway.connect(user1).registerBridgedToken(await newBridge.getAddress())
         ).to.emit(gateway, "BridgedTokenRegistered")
           .withArgs(await newToken.getAddress(), await newBridge.getAddress(), user1.address, 6);
 
@@ -2693,21 +2690,15 @@ describe("JuiceSwapGateway", function () {
 
         // Do NOT set bridge as minter - should fail
         await expect(
-          gateway.connect(user1).registerBridgedToken(
-            await newToken.getAddress(),
-            await newBridge.getAddress()
-          )
+          gateway.connect(user1).registerBridgedToken(await newBridge.getAddress())
         ).to.be.revertedWithCustomError(gateway, "NotApprovedMinter");
       });
 
       it("Should revert when registering duplicate bridged token", async function () {
-        const { gateway, usdc, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
+        const { gateway, usdcBridge } = await loadFixture(deployGatewayWithBridgedTokensFixture);
 
         await expect(
-          gateway.registerBridgedToken(
-            await usdc.getAddress(),
-            await usdcBridge.getAddress()
-          )
+          gateway.registerBridgedToken(await usdcBridge.getAddress())
         ).to.be.revertedWithCustomError(gateway, "BridgedTokenAlreadyExists");
       });
 
@@ -2721,37 +2712,11 @@ describe("JuiceSwapGateway", function () {
         expect(tokens).to.include(await ctUsd.getAddress());
       });
 
-      it("Should revert with InvalidBridgeConfig for zero addresses", async function () {
+      it("Should revert with InvalidBridgeConfig for zero address", async function () {
         const { gateway } = await loadFixture(deployGatewayWithBalancesFixture);
 
         await expect(
-          gateway.registerBridgedToken(ethers.ZeroAddress, ethers.ZeroAddress)
-        ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
-      });
-
-      it("Should revert with InvalidBridgeConfig when bridge.usd() != token", async function () {
-        const { gateway, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
-
-        const MockERC20Factory = await ethers.getContractFactory("MockERC20");
-        const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
-
-        // Deploy a token and a bridge for a DIFFERENT token
-        const wrongToken = await MockERC20Factory.deploy("Wrong", "WRONG", 6);
-        const usdc = await MockERC20Factory.deploy("USD Coin", "USDC", 6);
-        const bridge = await MockBridgeFactory.deploy(
-          await usdc.getAddress(),  // Bridge expects USDC
-          await jusd.getAddress(),
-          BRIDGE_LIMIT,
-          BRIDGE_WEEKS
-        );
-        await jusd.setMinter(await bridge.getAddress(), true);
-
-        // Try to register wrongToken with a bridge configured for USDC
-        await expect(
-          gateway.registerBridgedToken(
-            await wrongToken.getAddress(),
-            await bridge.getAddress()
-          )
+          gateway.registerBridgedToken(ethers.ZeroAddress)
         ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
       });
 
@@ -2774,10 +2739,7 @@ describe("JuiceSwapGateway", function () {
         await jusd.setMinter(await bridge.getAddress(), true);
 
         await expect(
-          gateway.registerBridgedToken(
-            await usdc.getAddress(),
-            await bridge.getAddress()
-          )
+          gateway.registerBridgedToken(await bridge.getAddress())
         ).to.be.revertedWithCustomError(gateway, "InvalidBridgeConfig");
       });
     });
@@ -3293,7 +3255,7 @@ describe("JuiceSwapGateway", function () {
 
         // Set bridge as approved minter and register (permissionless)
         await jusd.setMinter(await newBridge.getAddress(), true);
-        await gateway.registerBridgedToken(await newToken.getAddress(), await newBridge.getAddress());
+        await gateway.registerBridgedToken(await newBridge.getAddress());
 
         const status = await gateway.getBridgeStatus(await newToken.getAddress());
 

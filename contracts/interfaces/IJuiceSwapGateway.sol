@@ -262,10 +262,10 @@ interface IJuiceSwapGateway {
      * @notice Registers a bridged stablecoin that can be converted to JUSD via its bridge
      * @dev Permissionless - anyone can register a bridge IF it's an approved JUSD minter.
      *      The security comes from JUSD governance (veto system).
-     * @param token The bridged stablecoin address
+     *      The bridged token address is derived from bridge.usd().
      * @param bridge The StablecoinBridge contract for this token
      */
-    function registerBridgedToken(address token, address bridge) external;
+    function registerBridgedToken(address bridge) external;
 
     /**
      * @notice Returns comprehensive status information for a bridged token's bridge

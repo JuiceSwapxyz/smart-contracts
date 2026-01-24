@@ -14,7 +14,7 @@ import {
 /**
  * Register SUSD (StartUSD) as a bridged token on JuiceSwapGateway
  *
- * This script calls gateway.registerBridgedToken(SUSD_ADDRESS, STABLECOIN_BRIDGE_ADDRESS)
+ * This script calls gateway.registerBridgedToken(STABLECOIN_BRIDGE_ADDRESS)
  * to enable SUSD → any token swaps through the Gateway.
  *
  * Note: This is permissionless - anyone can call registerBridgedToken IF the bridge
@@ -167,10 +167,9 @@ async function main() {
   // ============================================
 
   console.log("🚀 Registering SUSD as bridged token...");
-  console.log(`   Calling: gateway.registerBridgedToken(${SUSD_ADDRESS}, ${BRIDGE_ADDRESS})`);
+  console.log(`   Calling: gateway.registerBridgedToken(${BRIDGE_ADDRESS})`);
 
   const tx = await gateway.registerBridgedToken(
-    SUSD_ADDRESS,
     BRIDGE_ADDRESS,
     formatGasOverrides(gasConfig, 200000)
   );

@@ -788,7 +788,6 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
             // Bridged token input -> mint JUSD via bridge
             BridgeConfig storage configIn = bridgeConfigs[tokenIn];
             SafeERC20.safeTransferFrom(IERC20(tokenIn), msg.sender, address(this), amountIn);
-            SafeERC20.forceApprove(IERC20(tokenIn), address(configIn.bridge), amountIn);
             configIn.bridge.mint(amountIn);
             jusdAmount = _bridgedToJusdAmount(amountIn, configIn.decimals);
         }
@@ -979,18 +978,19 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
      * @dev Permissionless - anyone can register a bridge IF it's an approved JUSD minter.
      *      The security comes from JUSD governance: bridges must go through the veto period
      *      before they can mint JUSD, so only governance-approved bridges can be registered.
-     * @param token The bridged stablecoin address (e.g., USDC.e, USDT.e, SUSD)
+     *      The bridged token address is derived from bridge.usd().
      * @param bridge The StablecoinBridge contract for this token
      */
-    function registerBridgedToken(address token, address bridge) external {
-        if (token == address(0) || bridge == address(0)) revert InvalidBridgeConfig();
+    function registerBridgedToken(address bridge) external {
+        if (bridge == address(0)) revert InvalidBridgeConfig();
+
+        IStablecoinBridge bridgeContract = IStablecoinBridge(bridge);
+        address token = bridgeContract.usd();
+
+        if (token == address(0)) revert InvalidBridgeConfig();
         if (bridgeConfigs[token].bridge != IStablecoinBridge(address(0))) {
             revert BridgedTokenAlreadyExists(token);
         }
-
-        // Validate bridge configuration matches expected tokens
-        IStablecoinBridge bridgeContract = IStablecoinBridge(bridge);
-        if (bridgeContract.usd() != token) revert InvalidBridgeConfig();
         if (bridgeContract.JUSD() != address(JUSD)) revert InvalidBridgeConfig();
 
         // Critical: Bridge must be approved JUSD minter (via JUSD governance veto system)
