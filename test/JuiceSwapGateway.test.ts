@@ -480,23 +480,23 @@ describe("JuiceSwapGateway", function () {
       ).to.be.revertedWithCustomError(juice, "ERC20InsufficientAllowance");
     });
 
-    it("Should add liquidity with JUICE as input token", async function () {
-      const { gateway, user1, juice, jusd, svJusd, wcbtc, positionManager } = await loadFixture(
-        deployGatewayWithBalancesFixture
-      );
+    it("Should add liquidity with JUICE as input token (JUICE stays JUICE)", async function () {
+      const { gateway, user1, juice, wcbtc, positionManager } = await loadFixture(deployGatewayWithBalancesFixture);
 
       const deadline = (await time.latest()) + DEADLINE_OFFSET;
-      const juiceAmount = ethers.parseEther("1"); // 1 JUICE
-      const expectedJusd = ethers.parseEther("100"); // 1 JUICE = 100 JUSD
+      const juiceAmount = ethers.parseEther("100"); // 100 JUICE
       const wcbtcAmount = ethers.parseEther("1");
 
-      // Fund the JUICE contract with JUSD for redemption
-      await jusd.mint(await juice.getAddress(), expectedJusd);
+      // Token ordering: Uniswap V3 requires token0 < token1
+      const juiceAddr = await juice.getAddress();
+      const wcbtcAddr = await wcbtc.getAddress();
+      const [amount0, amount1] = juiceAddr < wcbtcAddr ? [juiceAmount, wcbtcAmount] : [wcbtcAmount, juiceAmount];
+      await positionManager.setMintResult(1, 100, amount0, amount1);
 
       await juice.connect(user1).approve(await gateway.getAddress(), juiceAmount);
       await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
 
-      // Should succeed - JUICE is converted via redeemFrom to JUSD, then to svJUSD
+      // Should succeed - JUICE stays as JUICE (not converted to svJUSD)
       await expect(
         gateway.connect(user1).addLiquidity(
           await juice.getAddress(),
@@ -514,32 +514,26 @@ describe("JuiceSwapGateway", function () {
       ).to.emit(gateway, "LiquidityAdded");
     });
 
-    it("Should return excess as JUSD when adding liquidity with JUICE", async function () {
-      const { gateway, user1, juice, jusd, svJusd, wcbtc, positionManager } = await loadFixture(
-        deployGatewayWithBalancesFixture
-      );
+    it("Should return excess as JUICE when adding liquidity with JUICE", async function () {
+      const { gateway, user1, juice, wcbtc, positionManager } = await loadFixture(deployGatewayWithBalancesFixture);
 
       const deadline = (await time.latest()) + DEADLINE_OFFSET;
       const juiceAmount = ethers.parseEther("2"); // 2 JUICE (more than needed)
-      const expectedJusd = ethers.parseEther("200"); // 2 JUICE = 200 JUSD
       const wcbtcAmount = ethers.parseEther("1");
 
-      // Fund the JUICE contract with JUSD for redemption
-      await jusd.mint(await juice.getAddress(), expectedJusd);
-
-      // Mock position manager to only use half the svJUSD (100 JUSD worth)
-      const halfSvJusd = await svJusd.convertToShares(ethers.parseEther("100"));
+      // Mock position manager to only use half the JUICE
+      const halfJuice = juiceAmount / 2n;
 
       // Token ordering: Uniswap V3 requires token0 < token1
-      const svJusdAddr = await svJusd.getAddress();
+      const juiceAddr = await juice.getAddress();
       const wcbtcAddr = await wcbtc.getAddress();
-      const [amount0, amount1] = svJusdAddr < wcbtcAddr ? [halfSvJusd, wcbtcAmount] : [wcbtcAmount, halfSvJusd];
+      const [amount0, amount1] = juiceAddr < wcbtcAddr ? [halfJuice, wcbtcAmount] : [wcbtcAmount, halfJuice];
       await positionManager.setMintResult(1, 100, amount0, amount1);
 
       await juice.connect(user1).approve(await gateway.getAddress(), juiceAmount);
       await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
 
-      const jusdBefore = await jusd.balanceOf(user1.address);
+      const juiceBefore = await juice.balanceOf(user1.address);
 
       await gateway.connect(user1).addLiquidity(
         await juice.getAddress(),
@@ -555,9 +549,87 @@ describe("JuiceSwapGateway", function () {
         deadline
       );
 
-      const jusdAfter = await jusd.balanceOf(user1.address);
-      // User should receive excess as JUSD (not JUICE, due to flash loan protection)
-      expect(jusdAfter).to.be.gt(jusdBefore);
+      const juiceAfter = await juice.balanceOf(user1.address);
+      // User should receive excess as JUICE (JUICE stays JUICE for liquidity)
+      // Used half, so should have initial - half remaining
+      expect(juiceBefore - juiceAfter).to.equal(halfJuice);
+    });
+
+    it("Should revert when adding JUICE liquidity with JUSD (invalid pair)", async function () {
+      const { gateway, user1, juice, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("100");
+
+      await juice.connect(user1).approve(await gateway.getAddress(), amount);
+      await jusd.connect(user1).approve(await gateway.getAddress(), amount);
+
+      // JUICE + JUSD is not allowed (would be redundant with JUICE redemption)
+      await expect(
+        gateway
+          .connect(user1)
+          .addLiquidity(
+            await juice.getAddress(),
+            await jusd.getAddress(),
+            3000,
+            0,
+            0,
+            amount,
+            amount,
+            0,
+            0,
+            user1.address,
+            deadline
+          )
+      ).to.be.revertedWithCustomError(gateway, "JuiceCannotPairWithUsd");
+    });
+
+    it("Should revert when adding JUICE liquidity with bridged token (invalid pair)", async function () {
+      const { gateway, user1, juice, jusd } = await loadFixture(deployGatewayWithBalancesFixture);
+
+      // Deploy and register a bridged token
+      const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+      const usdt = await MockERC20Factory.deploy("USDT.e", "USDT.e", 6);
+      await usdt.waitForDeployment();
+
+      const MockBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+      const bridge = await MockBridgeFactory.deploy(
+        await usdt.getAddress(),
+        await jusd.getAddress(),
+        ethers.parseEther("1000000"), // limit
+        52 // weeks
+      );
+      await bridge.waitForDeployment();
+
+      // Make bridge an approved minter
+      await jusd.setMinter(await bridge.getAddress(), true);
+      await gateway.registerBridgedToken(await usdt.getAddress(), await bridge.getAddress());
+
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+      const amount = ethers.parseEther("100");
+
+      await juice.connect(user1).approve(await gateway.getAddress(), amount);
+      await usdt.mint(user1.address, ethers.parseUnits("100", 6));
+      await usdt.connect(user1).approve(await gateway.getAddress(), ethers.parseUnits("100", 6));
+
+      // JUICE + Bridged token is not allowed
+      await expect(
+        gateway
+          .connect(user1)
+          .addLiquidity(
+            await juice.getAddress(),
+            await usdt.getAddress(),
+            3000,
+            0,
+            0,
+            amount,
+            ethers.parseUnits("100", 6),
+            0,
+            0,
+            user1.address,
+            deadline
+          )
+      ).to.be.revertedWithCustomError(gateway, "JuiceCannotPairWithUsd");
     });
   });
 
@@ -1555,33 +1627,28 @@ describe("JuiceSwapGateway", function () {
       );
     });
 
-    it("Should increase liquidity with JUICE as input token", async function () {
-      const { gateway, user1, juice, jusd, svJusd, wcbtc, positionManager } = await loadFixture(
-        deployGatewayWithBalancesFixture
-      );
+    it("Should increase liquidity with JUICE as input token (JUICE stays JUICE)", async function () {
+      const { gateway, user1, juice, wcbtc, positionManager } = await loadFixture(deployGatewayWithBalancesFixture);
 
       const deadline = (await time.latest()) + DEADLINE_OFFSET;
       const tokenId = 1;
-      const juiceAmount = ethers.parseEther("1"); // 1 JUICE
-      const expectedJusd = ethers.parseEther("100"); // 1 JUICE = 100 JUSD (MockEquity PRICE)
+      const juiceAmount = ethers.parseEther("100"); // 100 JUICE
       const wcbtcAmount = ethers.parseEther("1");
 
-      const svJusdAddr = await svJusd.getAddress();
+      const juiceAddr = await juice.getAddress();
       const wcbtcAddr = await wcbtc.getAddress();
 
       // Token ordering: Uniswap V3 requires token0 < token1
-      const [token0, token1] = svJusdAddr < wcbtcAddr ? [svJusdAddr, wcbtcAddr] : [wcbtcAddr, svJusdAddr];
+      // Position is JUICE/WcBTC (JUICE stays JUICE for liquidity)
+      const [token0, token1] = juiceAddr < wcbtcAddr ? [juiceAddr, wcbtcAddr] : [wcbtcAddr, juiceAddr];
       await positionManager.setPositionData(tokenId, token0, token1, 100);
       await positionManager.mintNFT(user1.address, tokenId);
       await positionManager.connect(user1).approve(await gateway.getAddress(), tokenId);
 
-      // Fund the JUICE contract with JUSD for redemption
-      await jusd.mint(await juice.getAddress(), expectedJusd);
-
       await juice.connect(user1).approve(await gateway.getAddress(), juiceAmount);
       await wcbtc.connect(user1).approve(await gateway.getAddress(), wcbtcAmount);
 
-      // Should succeed - JUICE is converted via redeemFrom to JUSD, then to svJUSD
+      // Should succeed - JUICE stays as JUICE (not converted to svJUSD)
       await expect(
         gateway.connect(user1).increaseLiquidity(
           tokenId,

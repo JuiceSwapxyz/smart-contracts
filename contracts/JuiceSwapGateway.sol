@@ -186,6 +186,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     error TokenMismatch(address expected0, address expected1, address provided0, address provided1);
     error InsufficientLiquidity(uint128 requested, uint128 available);
     error InvalidTokenPair(address tokenA, address tokenB);
+    error JuiceCannotPairWithUsd(address usdToken);
     error InvalidTickRange(int24 tickLower, int24 tickUpper);
     error BridgedTokenAlreadyExists(address token);
     error BridgedTokenNotFound(address token);
@@ -225,6 +226,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         IERC20(_svJusd).approve(_positionManager, type(uint256).max);
         IERC20(_wcbtc).approve(_swapRouter, type(uint256).max);
         IERC20(_wcbtc).approve(_positionManager, type(uint256).max);
+        IERC20(_juice).approve(_positionManager, type(uint256).max); // For JUICE liquidity pools
     }
 
     /**
@@ -312,18 +314,32 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     ) external payable nonReentrant returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
         if (block.timestamp > deadline) revert DeadlineExpired();
 
+        // JUICE liquidity restriction: cannot pair with USD-based tokens
+        // (JUICE/svJUSD pool would be redundant since JUICE can be redeemed for JUSD)
+        if (tokenA == address(JUICE) || tokenB == address(JUICE)) {
+            address otherToken = tokenA == address(JUICE) ? tokenB : tokenA;
+            if (
+                otherToken == address(JUSD) ||
+                otherToken == address(SV_JUSD) ||
+                address(bridgeConfigs[otherToken].bridge) != address(0)
+            ) {
+                revert JuiceCannotPairWithUsd(otherToken);
+            }
+        }
+
         // Prevent invalid token pairs where both tokens convert to the same actual token
         // e.g., USDT + JUSD would both become svJUSD
-        if (_getActualToken(tokenA) == _getActualToken(tokenB)) {
+        // Note: Use _getActualTokenForLiquidity since JUICE stays JUICE for liquidity
+        if (_getActualTokenForLiquidity(tokenA) == _getActualTokenForLiquidity(tokenB)) {
             revert InvalidTokenPair(tokenA, tokenB);
         }
 
         // Use DEFAULT_FEE when fee is 0 (JUICE1-6 fix)
         uint24 effectiveFee = fee == 0 ? DEFAULT_FEE : fee;
 
-        // Convert input tokens
-        (address actualTokenA, uint256 actualAmountADesired) = _handleTokenIn(tokenA, amountADesired);
-        (address actualTokenB, uint256 actualAmountBDesired) = _handleTokenIn(tokenB, amountBDesired);
+        // Convert input tokens (JUICE stays JUICE for liquidity, not converted to svJUSD)
+        (address actualTokenA, uint256 actualAmountADesired) = _handleTokenInForLiquidity(tokenA, amountADesired);
+        (address actualTokenB, uint256 actualAmountBDesired) = _handleTokenInForLiquidity(tokenB, amountBDesired);
 
         // Cache token ordering comparison (JUICE1-11 fix)
         bool isAToken0 = actualTokenA < actualTokenB;
@@ -333,9 +349,9 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
             ? (actualTokenA, actualTokenB, actualAmountADesired, actualAmountBDesired)
             : (actualTokenB, actualTokenA, actualAmountBDesired, actualAmountADesired);
 
-        // Calculate minimum amounts for actual tokens
-        uint256 actualAmountAMin = _toActualMinAmount(tokenA, amountAMin);
-        uint256 actualAmountBMin = _toActualMinAmount(tokenB, amountBMin);
+        // Calculate minimum amounts for actual tokens (JUICE stays JUICE for liquidity)
+        uint256 actualAmountAMin = _toActualMinAmountForLiquidity(tokenA, amountAMin);
+        uint256 actualAmountBMin = _toActualMinAmountForLiquidity(tokenB, amountBMin);
 
         (uint256 amount0Min, uint256 amount1Min) = isAToken0
             ? (actualAmountAMin, actualAmountBMin)
@@ -403,14 +419,27 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     ) external payable nonReentrant returns (uint256 amountA, uint256 amountB, uint128 liquidity) {
         if (block.timestamp > deadline) revert DeadlineExpired();
 
+        // JUICE liquidity restriction: cannot pair with USD-based tokens
+        if (tokenA == address(JUICE) || tokenB == address(JUICE)) {
+            address otherToken = tokenA == address(JUICE) ? tokenB : tokenA;
+            if (
+                otherToken == address(JUSD) ||
+                otherToken == address(SV_JUSD) ||
+                address(bridgeConfigs[otherToken].bridge) != address(0)
+            ) {
+                revert JuiceCannotPairWithUsd(otherToken);
+            }
+        }
+
         // Verify NFT ownership
         address nftOwner = IERC721(address(POSITION_MANAGER)).ownerOf(tokenId);
         if (nftOwner != msg.sender) revert NotNFTOwner(msg.sender, nftOwner);
 
         // Validate tokens match position BEFORE any transfers (positions() is a view function)
+        // Note: Use _getActualTokenForLiquidity since JUICE stays JUICE for liquidity
         (, , address posToken0, address posToken1, , , , , , , , ) = POSITION_MANAGER.positions(tokenId);
-        address expectedTokenA = _getActualToken(tokenA);
-        address expectedTokenB = _getActualToken(tokenB);
+        address expectedTokenA = _getActualTokenForLiquidity(tokenA);
+        address expectedTokenB = _getActualTokenForLiquidity(tokenB);
 
         bool tokensMatch = (expectedTokenA == posToken0 && expectedTokenB == posToken1) ||
             (expectedTokenA == posToken1 && expectedTokenB == posToken0);
@@ -421,13 +450,13 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
         // Transfer NFT to this contract (only after validation passes)
         IERC721(address(POSITION_MANAGER)).transferFrom(msg.sender, address(this), tokenId);
 
-        // Convert input tokens (JUSD/bridged USD → svJUSD)
-        (address actualTokenA, uint256 actualAmountADesired) = _handleTokenIn(tokenA, amountADesired);
-        (address actualTokenB, uint256 actualAmountBDesired) = _handleTokenIn(tokenB, amountBDesired);
+        // Convert input tokens (JUICE stays JUICE for liquidity, JUSD/bridged USD → svJUSD)
+        (address actualTokenA, uint256 actualAmountADesired) = _handleTokenInForLiquidity(tokenA, amountADesired);
+        (address actualTokenB, uint256 actualAmountBDesired) = _handleTokenInForLiquidity(tokenB, amountBDesired);
 
-        // Calculate minimum amounts for actual tokens
-        uint256 actualAmountAMin = _toActualMinAmount(tokenA, amountAMin);
-        uint256 actualAmountBMin = _toActualMinAmount(tokenB, amountBMin);
+        // Calculate minimum amounts for actual tokens (JUICE stays JUICE for liquidity)
+        uint256 actualAmountAMin = _toActualMinAmountForLiquidity(tokenA, amountAMin);
+        uint256 actualAmountBMin = _toActualMinAmountForLiquidity(tokenB, amountBMin);
 
         // Cache token ordering comparison
         bool isAToken0 = actualTokenA < actualTokenB;
@@ -721,6 +750,53 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     }
 
     /**
+     * @dev Handles input token conversion for liquidity operations
+     * @notice Unlike _handleTokenIn, JUICE is NOT converted to svJUSD - it stays as JUICE.
+     *         This allows users to add JUICE directly to liquidity pools.
+     */
+    function _handleTokenInForLiquidity(
+        address token,
+        uint256 amount
+    ) internal returns (address actualToken, uint256 actualAmount) {
+        if (token == NATIVE_TOKEN) {
+            // Native cBTC → WcBTC
+            if (msg.value != amount) revert InvalidAmount();
+            WCBTC.deposit{value: amount}();
+            return (address(WCBTC), amount);
+        } else if (token == address(JUSD)) {
+            // JUSD → svJUSD
+            JUSD.transferFrom(msg.sender, address(this), amount);
+            uint256 shares = SV_JUSD.deposit(amount, address(this));
+            return (address(SV_JUSD), shares);
+        } else if (token == address(JUICE)) {
+            // JUICE stays JUICE for liquidity (NOT converted to svJUSD)
+            SafeERC20.safeTransferFrom(IERC20(address(JUICE)), msg.sender, address(this), amount);
+            if (IERC20(address(JUICE)).allowance(address(this), address(POSITION_MANAGER)) < amount) {
+                SafeERC20.forceApprove(IERC20(address(JUICE)), address(POSITION_MANAGER), type(uint256).max);
+            }
+            return (address(JUICE), amount);
+        }
+
+        // Check if token is a bridged stablecoin
+        BridgeConfig storage config = bridgeConfigs[token];
+        if (address(config.bridge) != address(0)) {
+            // Bridged USD (e.g., USDC.e, USDT.e, ctUSD) → JUSD (via Bridge) → svJUSD
+            SafeERC20.safeTransferFrom(IERC20(token), msg.sender, address(this), amount);
+            config.bridge.mint(amount);
+            uint256 jusdAmount = _bridgedToJusdAmount(amount, config.decimals);
+            uint256 shares = SV_JUSD.deposit(jusdAmount, address(this));
+            return (address(SV_JUSD), shares);
+        } else {
+            // Other tokens - direct transfer
+            SafeERC20.safeTransferFrom(IERC20(token), msg.sender, address(this), amount);
+            if (IERC20(token).allowance(address(this), address(POSITION_MANAGER)) < amount) {
+                SafeERC20.forceApprove(IERC20(token), address(POSITION_MANAGER), type(uint256).max);
+            }
+            return (token, amount);
+        }
+    }
+
+    /**
      * @dev Handles output token conversion and sends to recipient
      */
     function _handleTokenOut(address token, uint256 actualAmount, address to) internal returns (uint256 userAmount) {
@@ -759,12 +835,25 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     }
 
     /**
-     * @dev Returns the actual token address used in pools
+     * @dev Returns the actual token address used in pools (for swaps)
      */
     function _getActualToken(address token) internal view returns (address) {
         if (token == NATIVE_TOKEN) return address(WCBTC);
         if (token == address(JUSD)) return address(SV_JUSD);
         if (token == address(JUICE)) return address(SV_JUSD); // JUICE swaps through equity
+        // Check if token is a bridged stablecoin
+        if (address(bridgeConfigs[token].bridge) != address(0)) return address(SV_JUSD);
+        return token;
+    }
+
+    /**
+     * @dev Returns the actual token address used in pools (for liquidity)
+     * @notice Unlike _getActualToken, JUICE stays as JUICE for liquidity operations
+     */
+    function _getActualTokenForLiquidity(address token) internal view returns (address) {
+        if (token == NATIVE_TOKEN) return address(WCBTC);
+        if (token == address(JUSD)) return address(SV_JUSD);
+        if (token == address(JUICE)) return address(JUICE); // JUICE stays JUICE for liquidity
         // Check if token is a bridged stablecoin
         if (address(bridgeConfigs[token].bridge) != address(0)) return address(SV_JUSD);
         return token;
@@ -920,6 +1009,26 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
     }
 
     /**
+     * @dev Converts user-facing min amount to actual token min amount for liquidity operations
+     * @notice Unlike _toActualMinAmount, JUICE stays as JUICE (no conversion)
+     */
+    function _toActualMinAmountForLiquidity(address userToken, uint256 minAmount) internal view returns (uint256) {
+        if (userToken == address(JUSD)) {
+            return _jusdToSvJusdAmount(minAmount);
+        }
+        if (userToken == address(JUICE)) {
+            // JUICE stays JUICE for liquidity - no conversion needed
+            return minAmount;
+        }
+        // Check if token is a bridged stablecoin
+        BridgeConfig storage config = bridgeConfigs[userToken];
+        if (address(config.bridge) != address(0)) {
+            return _bridgedToSvJusdAmount(minAmount, config.decimals);
+        }
+        return minAmount;
+    }
+
+    /**
      * @dev Converts actual token amount back to user-facing token amount
      */
     function _toUserAmount(address userToken, uint256 actualAmount) internal view returns (uint256) {
@@ -994,6 +1103,9 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
             WCBTC.withdraw(excessAmount);
             (bool success, ) = to.call{value: excessAmount}("");
             if (!success) revert TransferFailed();
+        } else if (userToken == address(JUICE) && actualToken == address(JUICE)) {
+            // JUICE liquidity: return excess JUICE directly
+            SafeERC20.safeTransfer(IERC20(address(JUICE)), to, excessAmount);
         } else if (actualToken == address(SV_JUSD)) {
             // Check if userToken is a bridged stablecoin
             BridgeConfig storage config = bridgeConfigs[userToken];
@@ -1002,7 +1114,7 @@ contract JuiceSwapGateway is IJuiceSwapGateway, ReentrancyGuard {
                 uint256 jusdAmount = SV_JUSD.redeem(excessAmount, address(this), address(this));
                 config.bridge.burnAndSend(to, jusdAmount);
             } else if (userToken == address(JUICE)) {
-                // JUICE input: return excess as JUSD (can't convert back to JUICE due to flash loan protection)
+                // JUICE swap input: return excess as JUSD (can't convert back to JUICE due to flash loan protection)
                 SV_JUSD.redeem(excessAmount, to, address(this));
             } else {
                 // Unreachable: if actualToken is svJUSD, userToken must be JUSD, bridged token, or JUICE
