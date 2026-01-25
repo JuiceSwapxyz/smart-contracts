@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { ADDRESS } from "@juicedollar/jusd";
 import { V3_CORE_FACTORY_ADDRESSES, CHAIN_TO_ADDRESSES_MAP } from "@juiceswapxyz/sdk-core";
+import { ADDRESS as LAUNCHPAD_ADDRESS } from "@juiceswapxyz/launchpad";
 import {
   getGasConfig,
   getNetworkConfig,
@@ -16,21 +17,22 @@ import {
 
 /**
  * Deploy JuiceSwapGovernor and JuiceSwapFeeCollector, optionally transferring
- * ownership of Factory and ProxyAdmin to the Governor.
+ * ownership of Factory, ProxyAdmin, and TokenFactory to the Governor.
  *
  * This script:
- * 1. Gets addresses from canonical packages (@juicedollar/jusd, @juiceswapxyz/sdk-core)
+ * 1. Gets addresses from canonical packages (@juicedollar/jusd, @juiceswapxyz/sdk-core, @juiceswapxyz/launchpad)
  * 2. Checks deployer balance
  * 3. Deploys JuiceSwapGovernor
  * 4. Deploys JuiceSwapFeeCollector (owned by Governor)
- * 5. Optionally transfers Factory ownership to Governor (if TRANSFER_OWNERSHIP=true)
+ * 5. Optionally transfers V3 Factory ownership to Governor (if TRANSFER_OWNERSHIP=true)
  * 6. Optionally transfers ProxyAdmin ownership to Governor (if TRANSFER_OWNERSHIP=true)
- * 7. Saves deployment info to JSON
- * 8. Verifies both contracts on block explorer
+ * 7. Optionally transfers TokenFactory ownership to Governor (if TRANSFER_OWNERSHIP=true)
+ * 8. Saves deployment info to JSON
+ * 9. Verifies both contracts on block explorer
  *
  * Environment variables:
- * - TRANSFER_OWNERSHIP: Set to "true" to transfer Factory and ProxyAdmin ownership
- *                       to the Governor. Default is "false" (no transfer).
+ * - TRANSFER_OWNERSHIP: Set to "true" to transfer Factory, ProxyAdmin, and TokenFactory
+ *                       ownership to the Governor. Default is "false" (no transfer).
  */
 
 // All addresses are now imported from packages - no .env required for addresses!
@@ -89,6 +91,13 @@ async function main() {
   const SWAP_ROUTER_ADDRESS = dexAddresses.swapRouter02Address;
   const PROXY_ADMIN_ADDRESS = dexAddresses.proxyAdminAddress;
 
+  // Get TokenFactory address from launchpad package
+  const launchpadAddresses = LAUNCHPAD_ADDRESS[chainIdNum];
+  const TOKENFACTORY_ADDRESS = launchpadAddresses?.factory;
+
+  // TokenFactory is optional - only validate if launchpad is deployed
+  const hasTokenFactory = TOKENFACTORY_ADDRESS && TOKENFACTORY_ADDRESS !== "0x0000000000000000000000000000000000000000";
+
   // Validate all addresses are defined
   if (!FACTORY_ADDRESS) {
     throw new Error(`❌ Factory not defined for chain ${chainIdNum}`);
@@ -106,6 +115,9 @@ async function main() {
   console.log(`   Factory:     ${FACTORY_ADDRESS} (from @juiceswapxyz/sdk-core)`);
   console.log(`   SwapRouter:  ${SWAP_ROUTER_ADDRESS} (from @juiceswapxyz/sdk-core)`);
   console.log(`   ProxyAdmin:  ${PROXY_ADMIN_ADDRESS} (from @juiceswapxyz/sdk-core)`);
+  if (hasTokenFactory) {
+    console.log(`   TokenFactory: ${TOKENFACTORY_ADDRESS} (from @juiceswapxyz/launchpad)`);
+  }
   console.log("");
 
   // ============================================
@@ -128,6 +140,11 @@ async function main() {
 
   await validateContractDeployed(PROXY_ADMIN_ADDRESS, "ProxyAdmin");
   console.log(`   ✅ ProxyAdmin: ${PROXY_ADMIN_ADDRESS}`);
+
+  if (hasTokenFactory) {
+    await validateContractDeployed(TOKENFACTORY_ADDRESS, "TokenFactory");
+    console.log(`   ✅ TokenFactory: ${TOKENFACTORY_ADDRESS}`);
+  }
   console.log("");
 
   // ============================================
@@ -263,23 +280,70 @@ async function main() {
   }
 
   // ============================================
-  // 8. VERIFY OWNERSHIP TRANSFERS
+  // 8. TRANSFER TOKENFACTORY OWNERSHIP (if enabled and deployed)
   // ============================================
 
-  console.log("📝 Step 5: Verifying ownership transfers...\n");
+  let tokenFactoryTransferred = false;
+
+  if (hasTokenFactory) {
+    console.log("📝 Step 5: TokenFactory ownership...");
+
+    const tokenFactoryABI = [
+      "function owner() view returns (address)",
+      "function transferOwnership(address newOwner)",
+    ];
+
+    const tokenFactory = new ethers.Contract(TOKENFACTORY_ADDRESS, tokenFactoryABI, deployer);
+    const currentTokenFactoryOwner = await tokenFactory.owner();
+    console.log(`   Current TokenFactory Owner: ${currentTokenFactoryOwner}`);
+
+    if (!TRANSFER_OWNERSHIP) {
+      console.log("   ⏭️  Skipping ownership transfer (TRANSFER_OWNERSHIP=false)\n");
+    } else if (currentTokenFactoryOwner !== deployer.address) {
+      console.log("   ⚠️  Warning: Deployer is not TokenFactory owner!");
+      console.log("   Skipping TokenFactory ownership transfer.\n");
+    } else {
+      const transferTx = await tokenFactory.transferOwnership(
+        governorAddress,
+        formatGasOverrides(gasConfig, 200000)
+      );
+      console.log(`   📝 Tx Hash: ${transferTx.hash}`);
+      await transferTx.wait(confirmations);
+      console.log("   ✅ TokenFactory ownership transferred to Governor\n");
+    }
+
+    const newTokenFactoryOwner = await tokenFactory.owner();
+    tokenFactoryTransferred = newTokenFactoryOwner === governorAddress;
+  } else {
+    console.log("📝 Step 5: TokenFactory ownership...");
+    console.log("   ⏭️  TokenFactory not deployed on this chain\n");
+  }
+
+  // ============================================
+  // 9. VERIFY OWNERSHIP TRANSFERS
+  // ============================================
+
+  console.log("📝 Step 6: Verifying ownership transfers...\n");
 
   const newFactoryOwner = await factoryContract.owner();
   const newProxyOwner = await proxyAdmin.owner();
   const feeCollectorOwner = await feeCollector.owner();
 
   console.log("🔍 Final Ownership:");
-  console.log(`   Factory Owner:      ${newFactoryOwner}`);
-  console.log(`   ProxyAdmin Owner:   ${newProxyOwner}`);
-  console.log(`   FeeCollector Owner: ${feeCollectorOwner}`);
-  console.log(`   Governor Address:   ${governorAddress}`);
+  console.log(`   V3 Factory Owner:     ${newFactoryOwner}`);
+  console.log(`   ProxyAdmin Owner:     ${newProxyOwner}`);
+  if (hasTokenFactory) {
+    const tokenFactory = new ethers.Contract(TOKENFACTORY_ADDRESS, ["function owner() view returns (address)"], deployer);
+    const finalTokenFactoryOwner = await tokenFactory.owner();
+    console.log(`   TokenFactory Owner:   ${finalTokenFactoryOwner}`);
+  }
+  console.log(`   FeeCollector Owner:   ${feeCollectorOwner}`);
+  console.log(`   Governor Address:     ${governorAddress}`);
 
   const ownershipComplete =
-    newFactoryOwner === governorAddress && newProxyOwner === governorAddress;
+    newFactoryOwner === governorAddress &&
+    newProxyOwner === governorAddress &&
+    (!hasTokenFactory || tokenFactoryTransferred);
 
   if (ownershipComplete) {
     console.log("\n   ✅ All ownership successfully transferred to Governor!");
@@ -288,7 +352,7 @@ async function main() {
   }
 
   // ============================================
-  // 9. SAVE DEPLOYMENT FILE
+  // 10. SAVE DEPLOYMENT FILE
   // ============================================
 
   const blockNumber = await ethers.provider.getBlockNumber();
@@ -322,10 +386,12 @@ async function main() {
       factoryAddress: FACTORY_ADDRESS,
       proxyAdminAddress: PROXY_ADMIN_ADDRESS,
       swapRouterAddress: SWAP_ROUTER_ADDRESS,
+      tokenFactoryAddress: hasTokenFactory ? TOKENFACTORY_ADDRESS : null,
     },
     ownershipStatus: {
       factoryTransferred: newFactoryOwner === governorAddress,
       proxyAdminTransferred: newProxyOwner === governorAddress,
+      tokenFactoryTransferred: hasTokenFactory ? tokenFactoryTransferred : "N/A (not deployed)",
     },
     metadata: {
       deployer: "JuiceSwapXyz/smart-contracts",
@@ -340,10 +406,10 @@ async function main() {
   console.log(`\n📄 Governance deployment saved to: ${governanceFile}`);
 
   // ============================================
-  // 10. VERIFY CONTRACTS
+  // 11. VERIFY CONTRACTS
   // ============================================
 
-  console.log("\n📝 Step 6: Verifying contracts on explorer...");
+  console.log("\n📝 Step 7: Verifying contracts on explorer...");
 
   const governorVerified = await verifyContract(
     governorAddress,
@@ -358,7 +424,7 @@ async function main() {
   );
 
   // ============================================
-  // 11. SUMMARY
+  // 12. SUMMARY
   // ============================================
 
   console.log("\n========================================");
