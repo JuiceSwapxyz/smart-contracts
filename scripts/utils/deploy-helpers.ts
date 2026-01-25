@@ -404,7 +404,7 @@ export async function estimateDeploymentGas(
   } catch (error) {
     // Fallback estimate if estimation fails
     console.log("⚠️  Gas estimation failed, using fallback estimate");
-    const fallbackGas = 3000000n; // 3M gas
+    const fallbackGas = 10000000n; // 10M gas for large viaIR contracts
     const maxFeePerGas = ethers.parseUnits(gasConfig.maxFeePerGas, "gwei");
     return fallbackGas * maxFeePerGas;
   }

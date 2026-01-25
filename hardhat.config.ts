@@ -71,6 +71,7 @@ const config: HardhatUserConfig = {
       } : undefined,
       chainId: 5115,
       initialBaseFeePerGas: 0,
+      blockGasLimit: 30_000_000, // 30M gas limit for large contract deployments
       mining: {
         auto: true,
         interval: 0,
