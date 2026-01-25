@@ -490,6 +490,21 @@
     "@uniswap/v2-core" "^1.0.1"
     "@uniswap/v2-periphery" "^1.1.0-beta.0"
 
+"@juiceswapxyz/sdk-core@0.1.11-beta.0":
+  version "0.1.11-beta.0"
+  resolved "https://registry.yarnpkg.com/@juiceswapxyz/sdk-core/-/sdk-core-0.1.11-beta.0.tgz#c556e4302aabecb213e79f6292933352eb446309"
+  integrity sha512-TrWsMT21mzskau1WjiBwXfLvBcDPWr4SHCvTBfvp7tec9rwgPeyfAKq1cc9L4TncFGcSegZM2Fkpcpe66B6pkA==
+  dependencies:
+    "@ethersproject/address" "^5.0.2"
+    "@ethersproject/bytes" "^5.7.0"
+    "@ethersproject/keccak256" "5.7.0"
+    "@ethersproject/strings" "5.7.0"
+    big.js "^5.2.2"
+    decimal.js-light "^2.5.0"
+    jsbi "^3.1.4"
+    tiny-invariant "^1.1.0"
+    toformat "^2.0.0"
+
 "@juiceswapxyz/sdk-core@^0.1.10-beta.0":
   version "0.1.10-beta.0"
   resolved "https://registry.yarnpkg.com/@juiceswapxyz/sdk-core/-/sdk-core-0.1.10-beta.0.tgz#47e6db9f076a90f5c0f820286321fd602aa175ad"
