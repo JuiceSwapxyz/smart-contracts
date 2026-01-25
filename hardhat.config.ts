@@ -39,6 +39,7 @@ const config: HardhatUserConfig = {
   etherscan: {
     apiKey: {
       citreaTestnet: "no-api-key-needed",
+      citrea: "no-api-key-needed",
     },
     customChains: [
       {
@@ -47,6 +48,14 @@ const config: HardhatUserConfig = {
         urls: {
           apiURL: "https://dev.testnet.citreascan.com/api",
           browserURL: "https://dev.testnet.citreascan.com",
+        },
+      },
+      {
+        network: "citrea",
+        chainId: 4114,
+        urls: {
+          apiURL: "https://explorer.mainnet.citrea.xyz/api",
+          browserURL: "https://explorer.mainnet.citrea.xyz",
         },
       },
     ],
@@ -71,6 +80,12 @@ const config: HardhatUserConfig = {
       url: process.env.CITREA_RPC_URL || "https://rpc.testnet.citrea.xyz",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
       chainId: 5115,
+      timeout: 300_000,
+    },
+    citrea: {
+      url: process.env.CITREA_RPC_URL || "https://rpc.mainnet.citrea.xyz",
+      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
+      chainId: 4114,
       timeout: 300_000,
     },
   },

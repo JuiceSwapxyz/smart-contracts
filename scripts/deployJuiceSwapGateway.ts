@@ -163,27 +163,17 @@ async function main() {
 
   console.log("\n🔍 Validating deployment...");
 
+  // Note: JuiceSwapGateway is immutable with no owner or pause functionality
   const defaultFee = await gateway.defaultFee();
-  const owner = await gateway.owner();
-  const isPaused = await gateway.paused();
   const factory = await gateway.FACTORY();
 
   console.log(`   Default Fee: ${defaultFee} (${defaultFee === 3000n ? "0.3%" : "custom"})`);
-  console.log(`   Owner: ${owner}`);
-  console.log(`   Paused: ${isPaused}`);
   console.log(`   Factory: ${factory}`);
+  console.log(`   Note: Contract is immutable (no owner, no pause)`);
 
   // Validate expected state
   let validationPassed = true;
 
-  if (owner !== deployer.address) {
-    console.log("   ⚠️  Warning: Owner is not deployer!");
-    validationPassed = false;
-  }
-  if (isPaused) {
-    console.log("   ⚠️  Warning: Contract is paused!");
-    validationPassed = false;
-  }
   if (defaultFee !== 3000n) {
     console.log("   ⚠️  Warning: Default fee is not 3000 (0.3%)!");
     validationPassed = false;
@@ -247,7 +237,6 @@ async function main() {
   console.log(`   Contract: JuiceSwapGateway`);
   console.log(`   Address:  ${gatewayAddress}`);
   console.log(`   Network:  ${networkConfig.name}`);
-  console.log(`   Owner:    ${owner}`);
   console.log(`   Verified: ${verified ? "Yes" : "No (see manual command above)"}`);
   console.log("");
 
