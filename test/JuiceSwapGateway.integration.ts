@@ -53,8 +53,10 @@ const POSITION_MANAGER_ABI = [
   "function ownerOf(uint256 tokenId) view returns (address)",
 ];
 
-// Skip entire test suite if not on Citrea Testnet (or a fork of it)
-const isIntegrationTest = network.config.chainId === 5115;
+// Skip unless connected to Citrea Testnet (live network or fork)
+const isIntegrationTest =
+  network.config.chainId === CHAIN_ID &&
+  (network.name !== "hardhat" || process.env.FORK_CITREA === "true");
 
 (isIntegrationTest ? describe : describe.skip)("JuiceSwapGateway Integration Tests (Citrea Testnet / Fork)", function () {
   this.timeout(120_000);
