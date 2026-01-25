@@ -5,34 +5,35 @@
     "chainId": 5115
   },
   "deployment": {
-    "deployedAt": "2026-01-22T02:04:23.478Z",
-    "deployedBy": "0x10a80279f64D46D00Dcc16Cf5c7F4e611cb6056C",
-    "blockNumber": 21119315
+    "deployedAt": "2026-01-25T07:39:35.614Z",
+    "deployedBy": "0xaa90815Cb5250A868FDc914ADCbf26773126F550",
+    "blockNumber": 21259054
   },
   "contracts": {
     "JuiceSwapGateway": {
-      "address": "0x3b59BCd4eFe392d715f4c57fA4218BFCAD5FB153",
-      "deploymentTx": "0x3d8dc3a59a1773af5534116ecbca200d89779d236193fdcecdcea85fd6f8778b",
+      "address": "0x8eE3Dd585752805A258ad3a963949a7c3fec44eB",
+      "deploymentTx": "0x6cfc532b76ad02283bbf1229f9835e37915103b91a90bf7447e45a34dafac485",
       "constructorArgs": [
-        "0xFdB0a83d94CD65151148a131167Eb499Cb85d015",
-        "0x9580498224551E3f2e3A04330a684BF025111C53",
-        "0x7b2A560bf72B0Dd2EAbE3271F829C2597c8420d5",
+        "0x6a850a548fdd050e8961223ec8FfCDfacEa57E39",
+        "0x802a29bD29f02c8C477Af5362f9ba88FAe39Cc7B",
+        "0x7fa131991c8A7d8C21b11391C977Fc7c4c8e0D5E",
         "0x8d0c9d1c17aE5e40ffF9bE350f57840E9E66Cd93",
-        "0x2d11a82633adD5b8742311fDa0E751264d093E7f",
-        "0x56D63E0F763b29F62bb7242420d028F86e9402E1"
+        "0x26C106BC45E0dd599cbDD871605497B2Fc87c185",
+        "0x86e7A161cb9696E6d438c0c77dd18244efa2B8b1"
       ]
     }
   },
   "references": {
-    "jusdAddress": "0xFdB0a83d94CD65151148a131167Eb499Cb85d015",
-    "svJusdAddress": "0x9580498224551E3f2e3A04330a684BF025111C53",
-    "juiceAddress": "0x7b2A560bf72B0Dd2EAbE3271F829C2597c8420d5",
+    "jusdAddress": "0x6a850a548fdd050e8961223ec8FfCDfacEa57E39",
+    "svJusdAddress": "0x802a29bD29f02c8C477Af5362f9ba88FAe39Cc7B",
+    "juiceAddress": "0x7fa131991c8A7d8C21b11391C977Fc7c4c8e0D5E",
     "wcbtcAddress": "0x8d0c9d1c17aE5e40ffF9bE350f57840E9E66Cd93",
-    "swapRouterAddress": "0x2d11a82633adD5b8742311fDa0E751264d093E7f",
-    "positionManagerAddress": "0x56D63E0F763b29F62bb7242420d028F86e9402E1"
+    "swapRouterAddress": "0x26C106BC45E0dd599cbDD871605497B2Fc87c185",
+    "positionManagerAddress": "0x86e7A161cb9696E6d438c0c77dd18244efa2B8b1",
+    "factoryAddress": "0xdd6Db52dB41CE2C03002bB1adFdCC8E91C594238"
   },
   "metadata": {
     "deployer": "JuiceSwapXyz/smart-contracts",
-    "scriptVersion": "2.0.0"
+    "scriptVersion": "3.0.0"
   }
 }
