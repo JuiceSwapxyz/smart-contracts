@@ -1,45 +1,49 @@
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "2.0",
   "network": {
     "name": "Citrea Testnet",
     "chainId": 5115
   },
   "deployment": {
-    "deployedAt": "2026-01-09T14:04:44.886Z",
-    "deployedBy": "0xE399782Fe2B0aBb138926b14261F49473b4881A3",
-    "blockNumber": 20579346
+    "deployedAt": "2026-01-25T08:26:41.959Z",
+    "deployedBy": "0xaa90815Cb5250A868FDc914ADCbf26773126F550",
+    "blockNumber": 21260467
   },
   "contracts": {
     "JuiceSwapGovernor": {
-      "address": "0x205903c54C56bCED8C97f2DC250BA53d715174e9",
-      "deploymentTx": "0x212e951c1aab451e326a0844cfd5a85ac43ba517e0166e74816ebdceab872be0",
+      "address": "0x8AFD7CB73Ce85b44996B86ec604c125af244A2B8",
+      "deploymentTx": "0x5e9abfaf6778a818cf558f4da43b0aad5fa64ae6b59e808bb7088697d93c2c68",
       "constructorArgs": [
-        "0xFdB0a83d94CD65151148a131167Eb499Cb85d015",
-        "0x7b2A560bf72B0Dd2EAbE3271F829C2597c8420d5"
+        "0x6a850a548fdd050e8961223ec8FfCDfacEa57E39",
+        "0x7fa131991c8A7d8C21b11391C977Fc7c4c8e0D5E"
       ]
     },
     "JuiceSwapFeeCollector": {
-      "address": "0xc3d817C394d55aB57f5bF0Fc5C6878ccE033E32a",
-      "deploymentTx": "0x86ce35d2801036183c6cfbfff9a163ae46881ad9905c3db8de1c552c38ca08fa",
+      "address": "0xfac6303F78A2b316a20eD927Ba0f7a7d07AaC47E",
+      "deploymentTx": "0x97638843653f5065c3cb8ac1ca89bef06b6060deb37ad54070bf2f1ace0e0993",
       "constructorArgs": [
-        "0xFdB0a83d94CD65151148a131167Eb499Cb85d015",
-        "0x7b2A560bf72B0Dd2EAbE3271F829C2597c8420d5",
-        "0x2d11a82633adD5b8742311fDa0E751264d093E7f",
-        "0x9136D17Ec096AAd031D442a796cd5984128cF0b2",
-        "0x205903c54C56bCED8C97f2DC250BA53d715174e9"
+        "0x6a850a548fdd050e8961223ec8FfCDfacEa57E39",
+        "0x7fa131991c8A7d8C21b11391C977Fc7c4c8e0D5E",
+        "0x26C106BC45E0dd599cbDD871605497B2Fc87c185",
+        "0xdd6Db52dB41CE2C03002bB1adFdCC8E91C594238",
+        "0x8AFD7CB73Ce85b44996B86ec604c125af244A2B8"
       ]
     }
   },
   "references": {
-    "jusdAddress": "0xFdB0a83d94CD65151148a131167Eb499Cb85d015",
-    "juiceAddress": "0x7b2A560bf72B0Dd2EAbE3271F829C2597c8420d5",
-    "factoryAddress": "0x9136D17Ec096AAd031D442a796cd5984128cF0b2",
-    "proxyAdminAddress": "0xBc6dD1660166C63bd41ec6943E4Ab81fA327B821",
-    "swapRouterAddress": "0x2d11a82633adD5b8742311fDa0E751264d093E7f"
+    "jusdAddress": "0x6a850a548fdd050e8961223ec8FfCDfacEa57E39",
+    "juiceAddress": "0x7fa131991c8A7d8C21b11391C977Fc7c4c8e0D5E",
+    "v3FactoryAddress": "0xdd6Db52dB41CE2C03002bB1adFdCC8E91C594238",
+    "v2FactoryAddress": "0xfc271758732F5eD3ddF19727B7E29BFC3325370d",
+    "proxyAdminAddress": "0xCdc7C81784F9D3b4061e754477BEA077B7B4cCa4",
+    "swapRouterAddress": "0x26C106BC45E0dd599cbDD871605497B2Fc87c185",
+    "tokenFactoryAddress": "0xCf5b581064F27a0cFABbbD3E538aFf3b358665c4"
   },
   "ownershipStatus": {
-    "factoryTransferred": false,
-    "proxyAdminTransferred": false
+    "v3FactoryTransferred": true,
+    "v2FactoryTransferred": true,
+    "proxyAdminTransferred": true,
+    "tokenFactoryTransferred": true
   },
   "metadata": {
     "deployer": "JuiceSwapXyz/smart-contracts",

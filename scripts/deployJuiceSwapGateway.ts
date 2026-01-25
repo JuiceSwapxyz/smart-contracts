@@ -142,7 +142,7 @@ async function main() {
 
   const gateway = await JuiceSwapGateway.deploy(
     ...constructorArgs,
-    formatGasOverrides(gasConfig, 3000000) // 3M gas limit for safety
+    formatGasOverrides(gasConfig, 10000000) // 10M gas limit for large viaIR contract
   );
 
   console.log(`   ⏳ Waiting for deployment transaction...`);
@@ -163,24 +163,84 @@ async function main() {
 
   console.log("\n🔍 Validating deployment...");
 
-  // Note: JuiceSwapGateway is immutable with no owner or pause functionality
-  const defaultFee = await gateway.defaultFee();
-  const factory = await gateway.FACTORY();
+  // Validate all immutable addresses match constructor args
+  const [
+    deployedJusd,
+    deployedSvJusd,
+    deployedJuice,
+    deployedWcbtc,
+    deployedSwapRouter,
+    deployedPositionManager,
+    deployedFactory,
+    deployedDefaultFee,
+    deployedJusdDecimals,
+  ] = await Promise.all([
+    gateway.JUSD(),
+    gateway.SV_JUSD(),
+    gateway.JUICE(),
+    gateway.WCBTC(),
+    gateway.SWAP_ROUTER(),
+    gateway.POSITION_MANAGER(),
+    gateway.FACTORY(),
+    gateway.DEFAULT_FEE(),
+    gateway.JUSD_DECIMALS(),
+  ]);
 
-  console.log(`   Default Fee: ${defaultFee} (${defaultFee === 3000n ? "0.3%" : "custom"})`);
-  console.log(`   Factory: ${factory}`);
+  console.log("   📋 Immutable State:");
+  console.log(`      JUSD:             ${deployedJusd}`);
+  console.log(`      SV_JUSD:          ${deployedSvJusd}`);
+  console.log(`      JUICE:            ${deployedJuice}`);
+  console.log(`      WCBTC:            ${deployedWcbtc}`);
+  console.log(`      SWAP_ROUTER:      ${deployedSwapRouter}`);
+  console.log(`      POSITION_MANAGER: ${deployedPositionManager}`);
+  console.log(`      FACTORY:          ${deployedFactory}`);
+  console.log(`      DEFAULT_FEE:      ${deployedDefaultFee} (${deployedDefaultFee === 3000n ? "0.3%" : "custom"})`);
+  console.log(`      JUSD_DECIMALS:    ${deployedJusdDecimals}`);
   console.log(`   Note: Contract is immutable (no owner, no pause)`);
 
   // Validate expected state
   let validationPassed = true;
+  const validationErrors: string[] = [];
 
-  if (defaultFee !== 3000n) {
-    console.log("   ⚠️  Warning: Default fee is not 3000 (0.3%)!");
+  // Validate all immutable addresses match what we deployed with
+  if (deployedJusd.toLowerCase() !== JUSD_ADDRESS.toLowerCase()) {
+    validationErrors.push(`JUSD mismatch: expected ${JUSD_ADDRESS}, got ${deployedJusd}`);
+    validationPassed = false;
+  }
+  if (deployedSvJusd.toLowerCase() !== SV_JUSD_ADDRESS.toLowerCase()) {
+    validationErrors.push(`SV_JUSD mismatch: expected ${SV_JUSD_ADDRESS}, got ${deployedSvJusd}`);
+    validationPassed = false;
+  }
+  if (deployedJuice.toLowerCase() !== JUICE_ADDRESS.toLowerCase()) {
+    validationErrors.push(`JUICE mismatch: expected ${JUICE_ADDRESS}, got ${deployedJuice}`);
+    validationPassed = false;
+  }
+  if (deployedWcbtc.toLowerCase() !== WCBTC_ADDRESS.toLowerCase()) {
+    validationErrors.push(`WCBTC mismatch: expected ${WCBTC_ADDRESS}, got ${deployedWcbtc}`);
+    validationPassed = false;
+  }
+  if (deployedSwapRouter.toLowerCase() !== SWAP_ROUTER_ADDRESS.toLowerCase()) {
+    validationErrors.push(`SWAP_ROUTER mismatch: expected ${SWAP_ROUTER_ADDRESS}, got ${deployedSwapRouter}`);
+    validationPassed = false;
+  }
+  if (deployedPositionManager.toLowerCase() !== POSITION_MANAGER_ADDRESS.toLowerCase()) {
+    validationErrors.push(`POSITION_MANAGER mismatch: expected ${POSITION_MANAGER_ADDRESS}, got ${deployedPositionManager}`);
+    validationPassed = false;
+  }
+  if (deployedDefaultFee !== 3000n) {
+    validationErrors.push(`DEFAULT_FEE unexpected: expected 3000, got ${deployedDefaultFee}`);
+    validationPassed = false;
+  }
+  if (deployedJusdDecimals !== 18n) {
+    validationErrors.push(`JUSD_DECIMALS unexpected: expected 18, got ${deployedJusdDecimals}`);
     validationPassed = false;
   }
 
   if (validationPassed) {
     console.log("   ✅ All validations passed!");
+  } else {
+    console.log("   ⚠️  Validation warnings:");
+    validationErrors.forEach((err) => console.log(`      - ${err}`));
   }
 
   // ============================================
@@ -208,8 +268,9 @@ async function main() {
       wcbtcAddress: WCBTC_ADDRESS,
       swapRouterAddress: SWAP_ROUTER_ADDRESS,
       positionManagerAddress: POSITION_MANAGER_ADDRESS,
+      factoryAddress: deployedFactory, // Derived from PositionManager.factory()
     },
-    scriptVersion: "2.0.0",
+    scriptVersion: "3.0.0",
   });
 
   console.log("");
