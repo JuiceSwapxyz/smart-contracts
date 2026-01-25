@@ -69,6 +69,12 @@ const config: HardhatUserConfig = {
         url: process.env.CITREA_RPC_URL || "https://rpc.testnet.citrea.xyz",
         enabled: true,
       } : undefined,
+      accounts: process.env.FORK_CITREA === "true" && process.env.DEPLOYER_PRIVATE_KEY                                                                 
+      ? [{                                                                                                                                           
+          privateKey: process.env.DEPLOYER_PRIVATE_KEY,                                                                                              
+          balance: "10000000000000000000000", // 10000 ETH                                                                                           
+        }]                                                                                                                                           
+      : undefined, 
       chainId: 5115,
       initialBaseFeePerGas: 0,
       blockGasLimit: 30_000_000, // 30M gas limit for large contract deployments
