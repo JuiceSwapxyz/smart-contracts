@@ -1,23 +1,31 @@
 import { expect } from "chai";
 import { ethers, network } from "hardhat";
 import { Signer, Contract } from "ethers";
+import { ADDRESS } from "@juicedollar/jusd";
+import { WETH9, CHAIN_TO_ADDRESSES_MAP, ChainId } from "@juiceswapxyz/sdk-core";
 
 /**
- * JuiceSwapGateway Integration Tests - Citrea Testnet
+ * JuiceSwapGateway Integration Tests
  *
- * Run: yarn hardhat test test/JuiceSwapGateway.integration.ts --network citreaTestnet
+ * Run: CHAIN_ID=5115 FORK_CITREA=true yarn hardhat test test/JuiceSwapGateway.integration.ts
  *
- * Prerequisites:
- * - DEPLOYER_PRIVATE_KEY env var with funded account (JUSD, WcBTC, native cBTC)
+ * Requires: DEPLOYER_PRIVATE_KEY env var with funded account (JUSD, WcBTC, cBTC)
  */
 
+// Chain ID from environment or default to Citrea Testnet
+const CHAIN_ID = Number(process.env.CHAIN_ID) || 5115;
+
+// Build addresses from packages (single source of truth)
+const jusdAddresses = ADDRESS[CHAIN_ID];
+const dexAddresses = CHAIN_TO_ADDRESSES_MAP[CHAIN_ID as keyof typeof CHAIN_TO_ADDRESSES_MAP];
+
 const ADDRESSES = {
-  JuiceSwapGateway: "0x3b59BCd4eFe392d715f4c57fA4218BFCAD5FB153",
-  JUSD: "0xFdB0a83d94CD65151148a131167Eb499Cb85d015",
-  svJUSD: "0x9580498224551E3f2e3A04330a684BF025111C53",
-  WcBTC: "0x8d0c9d1c17aE5e40ffF9bE350f57840E9E66Cd93",
-  JUICE: "0x7b2A560bf72B0Dd2EAbE3271F829C2597c8420d5",
-  PositionManager: "0x56D63E0F763b29F62bb7242420d028F86e9402E1",
+  JuiceSwapGateway: dexAddresses.juiceSwapGatewayAddress!,
+  JUSD: jusdAddresses.juiceDollar,
+  svJUSD: jusdAddresses.savingsVaultJUSD,
+  JUICE: jusdAddresses.equity,
+  WcBTC: WETH9[CHAIN_ID as ChainId].address,
+  PositionManager: dexAddresses.nonfungiblePositionManagerAddress!,
 };
 
 const ERC20_ABI = [
@@ -28,7 +36,9 @@ const ERC20_ABI = [
 
 const GATEWAY_ABI = [
   "function swapExactTokensForTokens(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint256 minAmountOut, address to, uint256 deadline) payable returns (uint256)",
-  "function addLiquidity(address tokenA, address tokenB, uint24 fee, uint256 amountADesired, uint256 amountBDesired, uint256 amountAMin, uint256 amountBMin, address to, uint256 deadline) payable returns (uint256, uint256, uint256)",
+  "function addLiquidity(address tokenA, address tokenB, uint24 fee, int24 tickLower, int24 tickUpper, uint256 amountADesired, uint256 amountBDesired, uint256 amountAMin, uint256 amountBMin, address to, uint256 deadline) payable returns (uint256, uint256, uint256)",
+  "function createPoolAndAddLiquidity(address tokenA, address tokenB, uint24 fee, uint160 sqrtPriceX96, int24 tickLower, int24 tickUpper, uint256 amountADesired, uint256 amountBDesired, uint256 amountAMin, uint256 amountBMin, address to, uint256 deadline) payable returns (address, uint256, uint256, uint256)",
+  "function getPool(address tokenA, address tokenB, uint24 fee) view returns (address pool, bool exists)",
   "function increaseLiquidity(uint256 tokenId, address tokenA, address tokenB, uint256 amountADesired, uint256 amountBDesired, uint256 amountAMin, uint256 amountBMin, uint256 deadline) payable returns (uint256, uint256, uint128)",
   "function removeLiquidity(uint256 tokenId, uint128 liquidityToRemove, address tokenA, address tokenB, uint256 amountAMin, uint256 amountBMin, address to, uint256 deadline) returns (uint256, uint256)",
   "event SwapExecuted(address indexed user, address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut)",
@@ -43,10 +53,10 @@ const POSITION_MANAGER_ABI = [
   "function ownerOf(uint256 tokenId) view returns (address)",
 ];
 
-// Skip entire test suite if not on Citrea Testnet
-const isIntegrationTest = network.name === "citreaTestnet";
+// Skip entire test suite if not on Citrea Testnet (or a fork of it)
+const isIntegrationTest = network.config.chainId === 5115;
 
-(isIntegrationTest ? describe : describe.skip)("JuiceSwapGateway Integration Tests (Citrea Testnet)", function () {
+(isIntegrationTest ? describe : describe.skip)("JuiceSwapGateway Integration Tests (Citrea Testnet / Fork)", function () {
   this.timeout(120_000);
 
   let signer: Signer;
@@ -57,9 +67,9 @@ const isIntegrationTest = network.name === "citreaTestnet";
   let juice: Contract;
   let positionManager: Contract;
 
-  const JUSD_AMOUNT = 1_000_000n; // 1 JUSD (6 decimals)
-  const WCBTC_AMOUNT = 1000n; // 0.000000000000001 WcBTC (18 decimals)
-  const CBTC_AMOUNT = 1000n; // 0.000000000000001 cBTC (18 decimals)
+  const JUSD_AMOUNT = ethers.parseUnits("10", 18); // 10 JUSD (18 decimals)
+  const WCBTC_AMOUNT = ethers.parseUnits("0.0001", 18); // 0.0001 WcBTC (18 decimals)
+  const CBTC_AMOUNT = ethers.parseUnits("0.0001", 18); // 0.0001 cBTC (18 decimals)
   const FEE = 3000; // 0.3%
 
   const getDeadline = () => Math.floor(Date.now() / 1000) + 3600;
@@ -143,6 +153,12 @@ const isIntegrationTest = network.name === "citreaTestnet";
   }
 
   before(async function () {
+    // Workaround for Hardhat fork bug with unknown chains
+    // See: https://github.com/NomicFoundation/hardhat/issues/5511
+    if (network.name === "hardhat") {
+      await network.provider.send("hardhat_mine", ["0x1"]);
+    }
+
     const signers = await ethers.getSigners();
     if (signers.length === 0) {
       console.log("Skipping: No signer. Set DEPLOYER_PRIVATE_KEY env var.");
@@ -165,13 +181,78 @@ const isIntegrationTest = network.name === "citreaTestnet";
       ethers.provider.getBalance(signerAddress),
     ]);
 
-    console.log(`  JUSD: ${ethers.formatUnits(jusdBal, 6)}`);
+    console.log(`  JUSD: ${ethers.formatUnits(jusdBal, 18)}`);
     console.log(`  WcBTC: ${ethers.formatUnits(wcbtcBal, 18)}`);
     console.log(`  cBTC: ${ethers.formatUnits(cbtcBal, 18)}\n`);
   });
 
+  describe("0. Pool Bootstrap", function () {
+    it("Should create WcBTC/JUSD pool with initial liquidity", async function () {
+      // Check if pool already exists (allows running on testnet with existing pool)
+      const [existingPool, exists] = await gateway.getPool(ADDRESSES.JUSD, ADDRESSES.WcBTC, FEE);
+      if (exists) {
+        console.log(`    Pool already exists: ${existingPool}`);
+        return;
+      }
+
+      // Ensure we have enough JUSD
+      const jusdBalance = await jusd.balanceOf(signerAddress);
+      const requiredJusd = ethers.parseUnits("10000", 18); // 10,000 JUSD
+      if (jusdBalance < requiredJusd) {
+        console.log(`    Skipping: Need 10,000 JUSD, have ${ethers.formatUnits(jusdBalance, 18)}`);
+        this.skip();
+      }
+
+      // Price: 1 WcBTC (cBTC) = 100,000 JUSD (realistic BTC price)
+      // sqrtPriceX96 = sqrt(token1/token0) * 2^96
+      // token0 = svJUSD (lower address), token1 = WcBTC
+      // price = WcBTC/svJUSD = 0.00001 (1 svJUSD buys 0.00001 WcBTC)
+      const priceRatio = 0.00001; // 1/100000
+      const sqrtPriceX96 = BigInt(Math.floor(Math.sqrt(priceRatio) * 2 ** 96));
+
+      const jusdAmount = ethers.parseUnits("10000", 18); // 10,000 JUSD
+      const cbtcAmount = ethers.parseEther("0.1"); // 0.1 cBTC (~$10,000 at $100k/BTC)
+
+      await ensureApproval(jusd, jusdAmount);
+
+      console.log(`    Creating pool: 10,000 JUSD + 0.1 cBTC @ 1:100000 price...`);
+      const tx = await gateway.createPoolAndAddLiquidity(
+        ADDRESSES.JUSD,
+        ethers.ZeroAddress, // native cBTC
+        FEE,
+        sqrtPriceX96,
+        0, 0, // full range (sentinel values)
+        jusdAmount,
+        cbtcAmount,
+        0, 0, // no slippage for setup
+        signerAddress,
+        getDeadline(),
+        { value: cbtcAmount }
+      );
+      const receipt = await tx.wait();
+      expect(receipt.status).to.equal(1);
+
+      // Verify pool was created
+      const [poolAddr, poolExists] = await gateway.getPool(ADDRESSES.JUSD, ADDRESSES.WcBTC, FEE);
+      expect(poolExists).to.be.true;
+      console.log(`    Pool created at: ${poolAddr}`);
+
+      // Extract tokenId from event
+      const event = findLiquidityAddedEvent(receipt);
+      if (event) {
+        console.log(`    Initial liquidity NFT: ${event.tokenId}`);
+      }
+    });
+  });
+
   describe("1. JUSD -> WcBTC", function () {
     it("Should swap JUSD for WcBTC (JUSD->svJUSD conversion + pool swap)", async function () {
+      const [, poolExists] = await gateway.getPool(ADDRESSES.JUSD, ADDRESSES.WcBTC, FEE);
+      if (!poolExists) {
+        console.log(`    Skipping: Pool not bootstrapped`);
+        this.skip();
+      }
+
       const balance = await jusd.balanceOf(signerAddress);
       if (balance < JUSD_AMOUNT) this.skip();
 
@@ -179,7 +260,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdBefore = await jusd.balanceOf(signerAddress);
       const wcbtcBefore = await wcbtc.balanceOf(signerAddress);
 
-      console.log(`    Swapping ${ethers.formatUnits(JUSD_AMOUNT, 6)} JUSD -> WcBTC...`);
+      console.log(`    Swapping ${ethers.formatUnits(JUSD_AMOUNT, 18)} JUSD -> WcBTC...`);
       const tx = await gateway.swapExactTokensForTokens(
         ADDRESSES.JUSD,
         ADDRESSES.WcBTC,
@@ -196,7 +277,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdSpent = jusdBefore - jusdAfter;
       const wcbtcReceived = wcbtcAfter - wcbtcBefore;
       console.log(
-        `    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD, Received: ${ethers.formatUnits(wcbtcReceived, 18)} WcBTC`
+        `    Spent: ${ethers.formatUnits(jusdSpent, 18)} JUSD, Received: ${ethers.formatUnits(wcbtcReceived, 18)} WcBTC`
       );
 
       expect(receipt.status).to.equal(1);
@@ -217,6 +298,12 @@ const isIntegrationTest = network.name === "citreaTestnet";
 
   describe("2. WcBTC -> JUSD", function () {
     it("Should swap WcBTC for JUSD (pool swap + svJUSD->JUSD conversion)", async function () {
+      const [, poolExists] = await gateway.getPool(ADDRESSES.JUSD, ADDRESSES.WcBTC, FEE);
+      if (!poolExists) {
+        console.log(`    Skipping: Pool not bootstrapped`);
+        this.skip();
+      }
+
       const balance = await wcbtc.balanceOf(signerAddress);
       if (balance < WCBTC_AMOUNT) this.skip();
 
@@ -241,7 +328,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const wcbtcSpent = wcbtcBefore - wcbtcAfter;
       const jusdReceived = jusdAfter - jusdBefore;
       console.log(
-        `    Spent: ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC, Received: ${ethers.formatUnits(jusdReceived, 6)} JUSD`
+        `    Spent: ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC, Received: ${ethers.formatUnits(jusdReceived, 18)} JUSD`
       );
 
       expect(receipt.status).to.equal(1);
@@ -262,6 +349,12 @@ const isIntegrationTest = network.name === "citreaTestnet";
 
   describe("3. Native cBTC -> JUSD", function () {
     it("Should swap native cBTC for JUSD (cBTC->WcBTC wrap + pool swap + svJUSD->JUSD)", async function () {
+      const [, poolExists] = await gateway.getPool(ADDRESSES.JUSD, ADDRESSES.WcBTC, FEE);
+      if (!poolExists) {
+        console.log(`    Skipping: Pool not bootstrapped`);
+        this.skip();
+      }
+
       const balance = await ethers.provider.getBalance(signerAddress);
       if (balance < CBTC_AMOUNT + ethers.parseEther("0.0005")) this.skip();
 
@@ -282,7 +375,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
 
       const jusdAfter = await jusd.balanceOf(signerAddress);
       const jusdReceived = jusdAfter - jusdBefore;
-      console.log(`    Received: ${ethers.formatUnits(jusdReceived, 6)} JUSD`);
+      console.log(`    Received: ${ethers.formatUnits(jusdReceived, 18)} JUSD`);
 
       expect(receipt.status).to.equal(1);
 
@@ -300,6 +393,12 @@ const isIntegrationTest = network.name === "citreaTestnet";
 
   describe("4. WcBTC -> JUICE", function () {
     it("Should swap WcBTC for JUICE (pool swap + svJUSD->JUSD + Equity.invest)", async function () {
+      const [, poolExists] = await gateway.getPool(ADDRESSES.JUSD, ADDRESSES.WcBTC, FEE);
+      if (!poolExists) {
+        console.log(`    Skipping: Pool not bootstrapped`);
+        this.skip();
+      }
+
       const balance = await wcbtc.balanceOf(signerAddress);
       if (balance < WCBTC_AMOUNT) this.skip();
 
@@ -345,6 +444,12 @@ const isIntegrationTest = network.name === "citreaTestnet";
 
   describe("5. Native cBTC -> JUICE", function () {
     it("Should swap native cBTC for JUICE (full conversion chain)", async function () {
+      const [, poolExists] = await gateway.getPool(ADDRESSES.JUSD, ADDRESSES.WcBTC, FEE);
+      if (!poolExists) {
+        console.log(`    Skipping: Pool not bootstrapped`);
+        this.skip();
+      }
+
       const balance = await ethers.provider.getBalance(signerAddress);
       if (balance < CBTC_AMOUNT + ethers.parseEther("0.0005")) this.skip();
 
@@ -385,12 +490,18 @@ const isIntegrationTest = network.name === "citreaTestnet";
     let positionTokenId: bigint;
 
     it("6a. Should add liquidity with JUSD + WcBTC", async function () {
+      const [, poolExists] = await gateway.getPool(ADDRESSES.JUSD, ADDRESSES.WcBTC, FEE);
+      if (!poolExists) {
+        console.log(`    Skipping: Pool not bootstrapped`);
+        this.skip();
+      }
+
       const jusdBalance = await jusd.balanceOf(signerAddress);
       const wcbtcBalance = await wcbtc.balanceOf(signerAddress);
 
       // Use larger amounts for liquidity
-      const jusdAmount = 10_000_000n; // 10 JUSD (6 decimals)
-      const wcbtcAmount = 10_000n; // 0.00000000000001 WcBTC (18 decimals)
+      const jusdAmount = ethers.parseUnits("100", 18); // 100 JUSD (18 decimals)
+      const wcbtcAmount = ethers.parseUnits("0.001", 18); // 0.001 WcBTC (18 decimals)
 
       if (jusdBalance < jusdAmount || wcbtcBalance < wcbtcAmount) {
         console.log(`    Skipping: Insufficient balance (need 10 JUSD and some WcBTC)`);
@@ -404,7 +515,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const wcbtcBefore = await wcbtc.balanceOf(signerAddress);
 
       console.log(
-        `    Adding liquidity: ${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(wcbtcAmount, 18)} WcBTC...`
+        `    Adding liquidity: ${ethers.formatUnits(jusdAmount, 18)} JUSD + ${ethers.formatUnits(wcbtcAmount, 18)} WcBTC...`
       );
       const tx = await gateway.addLiquidity(
         ADDRESSES.JUSD,
@@ -441,7 +552,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
       const jusdSpent = jusdBefore - jusdAfter;
       const wcbtcSpent = wcbtcBefore - wcbtcAfter;
-      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD, ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC`);
+      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 18)} JUSD, ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC`);
       expect(jusdSpent).to.be.gt(0);
       expect(wcbtcSpent).to.be.gt(0);
     });
@@ -455,8 +566,8 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdBalance = await jusd.balanceOf(signerAddress);
       const wcbtcBalance = await wcbtc.balanceOf(signerAddress);
 
-      const jusdAmount = 5_000_000n; // 5 JUSD (6 decimals)
-      const wcbtcAmount = 5_000n; // 0.000000000000005 WcBTC (18 decimals)
+      const jusdAmount = ethers.parseUnits("50", 18); // 50 JUSD (18 decimals)
+      const wcbtcAmount = ethers.parseUnits("0.0005", 18); // 0.0005 WcBTC (18 decimals)
 
       if (jusdBalance < jusdAmount || wcbtcBalance < wcbtcAmount) {
         console.log(`    Skipping: Insufficient balance for increase`);
@@ -474,7 +585,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const wcbtcBefore = await wcbtc.balanceOf(signerAddress);
 
       console.log(
-        `    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(wcbtcAmount, 18)} WcBTC...`
+        `    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 18)} JUSD + ${ethers.formatUnits(wcbtcAmount, 18)} WcBTC...`
       );
       const tx = await gateway.increaseLiquidity(
         positionTokenId,
@@ -494,7 +605,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       expect(eventData).to.not.be.null;
       console.log(`    Liquidity added: ${eventData!.liquidity}`);
       console.log(
-        `    Event amounts: ${ethers.formatUnits(eventData!.amountA, 6)} JUSD, ${ethers.formatUnits(eventData!.amountB, 18)} WcBTC`
+        `    Event amounts: ${ethers.formatUnits(eventData!.amountA, 18)} JUSD, ${ethers.formatUnits(eventData!.amountB, 18)} WcBTC`
       );
 
       // Verify NFT returned to user
@@ -510,7 +621,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
       const jusdSpent = jusdBefore - jusdAfter;
       const wcbtcSpent = wcbtcBefore - wcbtcAfter;
-      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD, ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC`);
+      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 18)} JUSD, ${ethers.formatUnits(wcbtcSpent, 18)} WcBTC`);
       expect(jusdSpent).to.be.gt(0);
       expect(wcbtcSpent).to.be.gt(0);
 
@@ -575,7 +686,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdAfter = await jusd.balanceOf(signerAddress);
       const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
       console.log(
-        `    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 6)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 18)} WcBTC`
+        `    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 18)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 18)} WcBTC`
       );
       expect(jusdAfter).to.be.gt(jusdBefore);
       expect(wcbtcAfter).to.be.gt(wcbtcBefore);
@@ -624,7 +735,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdAfter = await jusd.balanceOf(signerAddress);
       const wcbtcAfter = await wcbtc.balanceOf(signerAddress);
       console.log(
-        `    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 6)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 18)} WcBTC`
+        `    Received: ${ethers.formatUnits(jusdAfter - jusdBefore, 18)} JUSD, ${ethers.formatUnits(wcbtcAfter - wcbtcBefore, 18)} WcBTC`
       );
       expect(jusdAfter).to.be.gt(jusdBefore);
       expect(wcbtcAfter).to.be.gt(wcbtcBefore);
@@ -635,11 +746,17 @@ const isIntegrationTest = network.name === "citreaTestnet";
     let positionTokenId: bigint;
 
     it("7a. Should add liquidity with native cBTC + JUSD", async function () {
+      const [, poolExists] = await gateway.getPool(ADDRESSES.JUSD, ADDRESSES.WcBTC, FEE);
+      if (!poolExists) {
+        console.log(`    Skipping: Pool not bootstrapped`);
+        this.skip();
+      }
+
       const cbtcBalance = await ethers.provider.getBalance(signerAddress);
       const jusdBalance = await jusd.balanceOf(signerAddress);
 
-      const cbtcAmount = 10_000n; // 0.00000000000001 cBTC (18 decimals)
-      const jusdAmount = 10_000_000n; // 10 JUSD (6 decimals)
+      const cbtcAmount = ethers.parseUnits("0.001", 18); // 0.001 cBTC (18 decimals)
+      const jusdAmount = ethers.parseUnits("100", 18); // 100 JUSD (18 decimals)
 
       if (cbtcBalance < cbtcAmount + ethers.parseEther("0.0005") || jusdBalance < jusdAmount) {
         console.log(`    Skipping: Insufficient balance (need some cBTC and 10 JUSD)`);
@@ -652,7 +769,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdBefore = await jusd.balanceOf(signerAddress);
 
       console.log(
-        `    Adding liquidity: ${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(cbtcAmount, 18)} native cBTC...`
+        `    Adding liquidity: ${ethers.formatUnits(jusdAmount, 18)} JUSD + ${ethers.formatUnits(cbtcAmount, 18)} native cBTC...`
       );
       const tx = await gateway.addLiquidity(
         ADDRESSES.JUSD,
@@ -688,7 +805,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       // Verify JUSD was taken from user (can't verify native cBTC due to gas complications)
       const jusdAfter = await jusd.balanceOf(signerAddress);
       const jusdSpent = jusdBefore - jusdAfter;
-      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD`);
+      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 18)} JUSD`);
       expect(jusdSpent).to.be.gt(0);
     });
 
@@ -701,8 +818,8 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const cbtcBalance = await ethers.provider.getBalance(signerAddress);
       const jusdBalance = await jusd.balanceOf(signerAddress);
 
-      const cbtcAmount = 5_000n; // 0.000000000000005 cBTC (18 decimals)
-      const jusdAmount = 5_000_000n; // 5 JUSD (6 decimals)
+      const cbtcAmount = ethers.parseUnits("0.0005", 18); // 0.0005 cBTC (18 decimals)
+      const jusdAmount = ethers.parseUnits("50", 18); // 50 JUSD (18 decimals)
 
       if (cbtcBalance < cbtcAmount + ethers.parseEther("0.0005") || jusdBalance < jusdAmount) {
         console.log(`    Skipping: Insufficient balance for increase`);
@@ -719,7 +836,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdBefore = await jusd.balanceOf(signerAddress);
 
       console.log(
-        `    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 6)} JUSD + ${ethers.formatUnits(cbtcAmount, 18)} native cBTC...`
+        `    Increasing liquidity: +${ethers.formatUnits(jusdAmount, 18)} JUSD + ${ethers.formatUnits(cbtcAmount, 18)} native cBTC...`
       );
       const tx = await gateway.increaseLiquidity(
         positionTokenId,
@@ -740,7 +857,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       expect(eventData).to.not.be.null;
       console.log(`    Liquidity added: ${eventData!.liquidity}`);
       console.log(
-        `    Event amounts: ${ethers.formatUnits(eventData!.amountA, 6)} JUSD, ${ethers.formatUnits(eventData!.amountB, 18)} cBTC`
+        `    Event amounts: ${ethers.formatUnits(eventData!.amountA, 18)} JUSD, ${ethers.formatUnits(eventData!.amountB, 18)} cBTC`
       );
 
       // Verify NFT returned to user
@@ -754,7 +871,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       // Verify JUSD was taken from user (can't verify native cBTC due to gas complications)
       const jusdAfter = await jusd.balanceOf(signerAddress);
       const jusdSpent = jusdBefore - jusdAfter;
-      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 6)} JUSD`);
+      console.log(`    Spent: ${ethers.formatUnits(jusdSpent, 18)} JUSD`);
       expect(jusdSpent).to.be.gt(0);
 
       // Verify event amounts
@@ -806,7 +923,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       expect(removedEvent!.amountB).to.be.gt(0); // cBTC amount (proves gateway processed the WcBTC)
 
       console.log(
-        `    Event amounts: ${ethers.formatUnits(removedEvent!.amountA, 6)} JUSD, ${ethers.formatUnits(removedEvent!.amountB, 18)} cBTC`
+        `    Event amounts: ${ethers.formatUnits(removedEvent!.amountA, 18)} JUSD, ${ethers.formatUnits(removedEvent!.amountB, 18)} cBTC`
       );
 
       // Verify all liquidity was removed from position
@@ -820,7 +937,7 @@ const isIntegrationTest = network.name === "citreaTestnet";
       const jusdReceived = jusdAfter - jusdBefore;
       const wcbtcChange = wcbtcAfter - wcbtcBefore;
 
-      console.log(`    Received: ${ethers.formatUnits(jusdReceived, 6)} JUSD`);
+      console.log(`    Received: ${ethers.formatUnits(jusdReceived, 18)} JUSD`);
       console.log(`    WcBTC change: ${wcbtcChange} (should be 0 if unwrapped to native)`);
 
       // Verify JUSD was received (svJUSD -> JUSD conversion worked)
