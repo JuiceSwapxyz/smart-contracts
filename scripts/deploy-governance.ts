@@ -164,7 +164,7 @@ async function main() {
   const maxFeePerGas = ethers.parseUnits(gasConfig.maxFeePerGas, "gwei");
   const estimatedCost = estimatedTotalGas * maxFeePerGas;
 
-  await validateMinimumBalance(deployer.address, estimatedCost);
+  await validateMinimumBalance(deployer.address, estimatedCost, 0n);
 
   // ============================================
   // 4. DEPLOY JUICESWAP GOVERNOR

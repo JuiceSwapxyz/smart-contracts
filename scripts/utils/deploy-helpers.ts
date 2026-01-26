@@ -87,9 +87,8 @@ const GAS_CONFIGS: Record<string, GasConfig> = {
     maxPriorityFeePerGas: "0.001",
   },
   citrea: {
-    // Mainnet: same as testnet for Citrea
-    maxFeePerGas: "0.01",
-    maxPriorityFeePerGas: "0.001",
+    maxFeePerGas: "0.002",
+    maxPriorityFeePerGas: "0.0005",
   },
 };
 

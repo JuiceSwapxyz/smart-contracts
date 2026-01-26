@@ -131,7 +131,7 @@ async function main() {
   console.log("💰 Checking deployer balance...");
   const JuiceSwapGateway = await ethers.getContractFactory("JuiceSwapGateway");
   const estimatedCost = await estimateDeploymentGas(JuiceSwapGateway, constructorArgs, gasConfig);
-  await validateMinimumBalance(deployer.address, estimatedCost);
+  await validateMinimumBalance(deployer.address, estimatedCost, 0n);
 
   // ============================================
   // 4. DEPLOY CONTRACT
