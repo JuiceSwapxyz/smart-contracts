@@ -67,6 +67,9 @@ const config: HardhatUserConfig = {
     hardhat: {
       chainId: process.env.FORK_TESTNET ? 5115 : process.env.FORK_MAINNET ? 4114 : 31337,
       allowUnlimitedContractSize: true,
+      accounts: process.env.DEPLOYER_PRIVATE_KEY
+        ? [{ privateKey: process.env.DEPLOYER_PRIVATE_KEY, balance: "10000000000000000000" }]
+        : undefined,
       forking: process.env.FORK_TESTNET ? {
         url: process.env.CITREA_TESTNET_RPC || "https://rpc.testnet.citrea.xyz",
         enabled: true,
