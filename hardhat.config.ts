@@ -69,7 +69,7 @@ const config: HardhatUserConfig = {
         url: process.env.CITREA_RPC_URL || "https://rpc.testnet.citrea.xyz",
         enabled: true,
       } : undefined,
-      accounts: process.env.FORK_CITREA === "true" && process.env.DEPLOYER_PRIVATE_KEY
+      accounts: process.env.DEPLOYER_PRIVATE_KEY
       ? [{
           privateKey: process.env.DEPLOYER_PRIVATE_KEY,
           balance: "10000000000000000000000", // 10000 ETH
@@ -98,6 +98,14 @@ const config: HardhatUserConfig = {
     },
     citreaTestnet: {
       url: process.env.CITREA_RPC_URL || "https://rpc.testnet.citrea.xyz",
+      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
+      chainId: 5115,
+      timeout: 300_000,
+    },
+    // Anvil fork network - use when Hardhat's built-in forking fails
+    // Start Anvil first: anvil --fork-url https://rpc.testnet.citrea.xyz --chain-id 5115
+    citreaFork: {
+      url: "http://127.0.0.1:8545",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
       chainId: 5115,
       timeout: 300_000,
