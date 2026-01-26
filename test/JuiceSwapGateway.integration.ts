@@ -7,7 +7,8 @@ import { WETH9, CHAIN_TO_ADDRESSES_MAP, ChainId } from "@juiceswapxyz/sdk-core";
 /**
  * JuiceSwapGateway Integration Tests
  *
- * Run: CHAIN_ID=5115 FORK_CITREA=true yarn hardhat test test/JuiceSwapGateway.integration.ts
+ * Run: FORK_TESTNET=true npx hardhat test test/JuiceSwapGateway.integration.ts --network hardhat
+ *      FORK_MAINNET=true CHAIN_ID=4114 npx hardhat test test/JuiceSwapGateway.integration.ts --network hardhat
  *
  * Requires: DEPLOYER_PRIVATE_KEY env var with funded account (JUSD, WcBTC, cBTC)
  */
@@ -53,10 +54,10 @@ const POSITION_MANAGER_ABI = [
   "function ownerOf(uint256 tokenId) view returns (address)",
 ];
 
-// Skip unless connected to Citrea Testnet (live network or fork)
-const isIntegrationTest =
-  network.config.chainId === CHAIN_ID &&
-  (network.name !== "hardhat" || process.env.FORK_CITREA === "true");
+// Skip unless connected to Citrea Testnet/Mainnet (live network or fork)
+const isForkNetwork = process.env.FORK_TESTNET === "true" || process.env.FORK_MAINNET === "true";
+const isLiveNetwork = network.name === "citreaTestnet" || network.name === "citrea";
+const isIntegrationTest = isForkNetwork || isLiveNetwork;
 
 (isIntegrationTest ? describe : describe.skip)("JuiceSwapGateway Integration Tests (Citrea Testnet / Fork)", function () {
   this.timeout(120_000);
