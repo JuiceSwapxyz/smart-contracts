@@ -505,10 +505,10 @@
     tiny-invariant "^1.1.0"
     toformat "^2.0.0"
 
-"@juiceswapxyz/sdk-core@^3.0.1":
-  version "3.0.1"
-  resolved "https://registry.yarnpkg.com/@juiceswapxyz/sdk-core/-/sdk-core-3.0.1.tgz#0eafb2b41262dcd39f7ebaf147753dcec5b07e26"
-  integrity sha512-VNv/PLJ0HW3bves5hPBECRgNCJeRGAs1eID1LQIRVaR0FBI9zNk5e9L42zpZA5RA1uhOnI99fgUClnXJrc6YRg==
+"@juiceswapxyz/sdk-core@^3.0.2":
+  version "3.0.2"
+  resolved "https://registry.yarnpkg.com/@juiceswapxyz/sdk-core/-/sdk-core-3.0.2.tgz#2afd094fa5d1611ffe7ca961129f3f29878b7f01"
+  integrity sha512-rQ/OJszvdba0RQPd//xukNkaygTbb2uQPufVkdJ+75LCHbHUDsgByoBJIiqe/jfhxz5w4oewZtJDceO5xUkwKw==
   dependencies:
     "@ethersproject/address" "^5.0.2"
     "@ethersproject/bytes" "^5.7.0"

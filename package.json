@@ -34,7 +34,7 @@
   "devDependencies": {
     "@juicedollar/jusd": "^3.0.0",
     "@juiceswapxyz/launchpad": "^3.0.0",
-    "@juiceswapxyz/sdk-core": "^3.0.1",
+    "@juiceswapxyz/sdk-core": "^3.0.2",
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
     "@nomicfoundation/hardhat-ethers": "^3.0.5",
     "@nomicfoundation/hardhat-network-helpers": "^1.0.0",
