@@ -32,9 +32,9 @@
     "viem": "^2.44.0"
   },
   "devDependencies": {
-    "@juicedollar/jusd": "^1.1.0",
-    "@juiceswapxyz/launchpad": "^2.1.2",
-    "@juiceswapxyz/sdk-core": "0.1.11-beta.0",
+    "@juicedollar/jusd": "^1.1.1",
+    "@juiceswapxyz/launchpad": "^2.1.3",
+    "@juiceswapxyz/sdk-core": "^0.1.12-beta.0",
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
     "@nomicfoundation/hardhat-ethers": "^3.0.5",
     "@nomicfoundation/hardhat-network-helpers": "^1.0.0",
