@@ -17,7 +17,10 @@ import { ADDRESS as LAUNCHPAD_ADDRESS } from "@juiceswapxyz/launchpad";
  *
  * Run with Anvil fork (recommended):
  *   1. anvil --fork-url https://rpc.testnet.citrea.xyz --chain-id 5115
- *   2. DEPLOYER_PRIVATE_KEY=0x... npx hardhat test test/Governance.integration.ts --network citreaFork
+ *   2. DEPLOYER_PRIVATE_KEY=0x... npx hardhat test test/Governance.integration.ts --network anvilTestnet
+ *
+ * Or with Hardhat fork:
+ *   FORK_TESTNET=true npx hardhat test test/Governance.integration.ts --network hardhat
  *
  * Prerequisites:
  *   - DEPLOYER_PRIVATE_KEY with funded account (JUSD for proposals, cBTC for gas)
@@ -152,8 +155,12 @@ enum ProposalState {
   Executed = 4,
 }
 
-const isIntegrationTest = network.name === "citreaTestnet" || network.name === "citreaFork" || process.env.FORK_CITREA === "true";
-const canManipulateTime = network.name === "citreaFork" || process.env.FORK_CITREA === "true";
+// Network detection
+const isForkNetwork = process.env.FORK_TESTNET === "true" || process.env.FORK_MAINNET === "true";
+const isAnvilNetwork = network.name === "anvilTestnet" || network.name === "anvilMainnet";
+const isLiveNetwork = network.name === "citreaTestnet" || network.name === "citrea";
+const isIntegrationTest = isForkNetwork || isAnvilNetwork || isLiveNetwork;
+const canManipulateTime = network.name === "hardhat" || isAnvilNetwork; // Hardhat (with or without fork) and Anvil support time manipulation
 
 (isIntegrationTest ? describe : describe.skip)("Governance Integration Tests (Citrea Testnet Fork)", function () {
   this.timeout(180_000); // 3 minutes for slow operations
@@ -180,7 +187,7 @@ const canManipulateTime = network.name === "citreaFork" || process.env.FORK_CITR
     const chainId = (await ethers.provider.getNetwork()).chainId;
     if (Number(chainId) !== CHAIN_ID) {
       console.log(`Skipping: Expected chain ID ${CHAIN_ID}, got ${chainId}`);
-      console.log("Run with: FORK_CITREA=true npx hardhat test test/Governance.integration.ts");
+      console.log("Run with: FORK_TESTNET=true npx hardhat test test/Governance.integration.ts --network hardhat");
       return this.skip();
     }
 
@@ -362,7 +369,7 @@ const canManipulateTime = network.name === "citreaFork" || process.env.FORK_CITR
       // Time manipulation tests only work on forked networks
       if (!canManipulateTime) {
         console.log("    Skipping: Proposal lifecycle tests require forked network (time manipulation)");
-        console.log("    Run with FORK_CITREA=true for full test suite");
+        console.log("    Run with FORK_TESTNET=true for full test suite");
         return this.skip();
       }
 
