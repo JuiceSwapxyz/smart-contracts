@@ -200,7 +200,7 @@ Run the comprehensive test suite:
 npm test
 
 # Test on local Citrea Testnet fork
-FORK_CITREA=true npm test
+FORK_TESTNET=true npm test
 ```
 
 **Test Coverage:**

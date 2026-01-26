@@ -12,7 +12,8 @@ describe("FirstSqueezerNFT", function () {
     claimer: string,
     signerWallet: HardhatEthersSigner
   ): Promise<string> {
-    const chainId = 5115; // Citrea Testnet
+    const network = await ethers.provider.getNetwork();
+    const chainId = network.chainId;
     const messageHash = ethers.solidityPackedKeccak256(
       ["address", "uint256", "address"],
       [contractAddress, chainId, claimer]

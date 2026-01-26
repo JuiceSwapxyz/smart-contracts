@@ -65,30 +65,20 @@ const config: HardhatUserConfig = {
   },
   networks: {
     hardhat: {
-      forking: process.env.FORK_CITREA === "true" ? {
-        url: process.env.CITREA_RPC_URL || "https://rpc.testnet.citrea.xyz",
+      chainId: process.env.FORK_TESTNET ? 5115 : process.env.FORK_MAINNET ? 4114 : 31337,
+      allowUnlimitedContractSize: true,
+      forking: process.env.FORK_TESTNET ? {
+        url: process.env.CITREA_TESTNET_RPC || "https://rpc.testnet.citrea.xyz",
+        enabled: true,
+      } : process.env.FORK_MAINNET ? {
+        url: process.env.CITREA_MAINNET_RPC || "https://rpc.mainnet.citrea.xyz",
         enabled: true,
       } : undefined,
-      accounts: process.env.DEPLOYER_PRIVATE_KEY
-      ? [{
-          privateKey: process.env.DEPLOYER_PRIVATE_KEY,
-          balance: "10000000000000000000000", // 10000 ETH
-        }]
-      : undefined,
-      chainId: 5115,
-      hardfork: "shanghai",
       chains: {
-        5115: {
-          hardforkHistory: {
-            shanghai: 0,
-          },
-        },
-        4114: {
-          hardforkHistory: {
-            shanghai: 0,
-          },
-        },
+        5115: { hardforkHistory: { shanghai: 0 } },
+        4114: { hardforkHistory: { shanghai: 0 } },
       },
+      hardfork: "shanghai",
       initialBaseFeePerGas: 0,
       blockGasLimit: 30_000_000, // 30M gas limit for large contract deployments
       mining: {
@@ -96,22 +86,40 @@ const config: HardhatUserConfig = {
         interval: 0,
       },
     },
-    citreaTestnet: {
-      url: process.env.CITREA_RPC_URL || "https://rpc.testnet.citrea.xyz",
-      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
+    // Localhost networks for persistent forked nodes (optional use)
+    forkTestnet: {
+      url: "http://127.0.0.1:8545",
       chainId: 5115,
       timeout: 300_000,
     },
-    // Anvil fork network - use when Hardhat's built-in forking fails
+    forkMainnet: {
+      url: "http://127.0.0.1:8545",
+      chainId: 4114,
+      timeout: 300_000,
+    },
+    // Anvil fork networks - use when Hardhat's built-in forking fails (e.g., Governance tests)
     // Start Anvil first: anvil --fork-url https://rpc.testnet.citrea.xyz --chain-id 5115
-    citreaFork: {
+    anvilTestnet: {
       url: "http://127.0.0.1:8545",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
       chainId: 5115,
       timeout: 300_000,
     },
+    // Start Anvil first: anvil --fork-url https://rpc.mainnet.citrea.xyz --chain-id 4114
+    anvilMainnet: {
+      url: "http://127.0.0.1:8545",
+      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
+      chainId: 4114,
+      timeout: 300_000,
+    },
+    citreaTestnet: {
+      url: process.env.CITREA_TESTNET_RPC || "https://rpc.testnet.citrea.xyz",
+      accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
+      chainId: 5115,
+      timeout: 300_000,
+    },
     citrea: {
-      url: process.env.CITREA_RPC_URL || "https://rpc.mainnet.citrea.xyz",
+      url: process.env.CITREA_MAINNET_RPC || "https://rpc.mainnet.citrea.xyz",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
       chainId: 4114,
       timeout: 300_000,
