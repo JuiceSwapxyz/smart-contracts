@@ -37,7 +37,7 @@ Edit `.env` and add:
 
 ```env
 # Deployment Configuration
-CITREA_RPC_URL=https://rpc.testnet.citrea.xyz
+CITREA_RPC_URL=https://rpc.testnet.citreascan.com
 DEPLOYER_PRIVATE_KEY=your_private_key_here
 
 # JuiceDollar Protocol Addresses
@@ -161,4 +161,4 @@ The JuiceSwapGateway acts as an abstraction layer that:
 
 For issues or questions:
 - GitHub: https://github.com/JuiceSwapxyz
-- Explorer: https://explorer.testnet.citrea.xyz
+- Explorer: https://testnet.citreascan.com

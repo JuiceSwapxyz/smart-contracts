@@ -16,7 +16,7 @@ import { ADDRESS as LAUNCHPAD_ADDRESS } from "@juiceswapxyz/launchpad";
  * Governance Integration Tests - Citrea Testnet
  *
  * Run with Anvil fork (recommended):
- *   1. anvil --fork-url https://rpc.testnet.citrea.xyz --chain-id 5115
+ *   1. anvil --fork-url https://rpc.testnet.citreascan.com --chain-id 5115
  *   2. DEPLOYER_PRIVATE_KEY=0x... npx hardhat test test/Governance.integration.ts --network anvilTestnet
  *
  * Or with Hardhat fork:
