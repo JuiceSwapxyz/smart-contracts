@@ -215,7 +215,7 @@ FORK_TESTNET=true npm test
 
 **Citrea Testnet:**
 - Chain ID: 5115
-- RPC: https://rpc.testnet.citrea.xyz
+- RPC: https://rpc.testnet.citreascan.com
 - Native Token: cBTC (testnet Bitcoin)
 
 ## License

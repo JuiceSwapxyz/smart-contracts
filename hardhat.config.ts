@@ -54,8 +54,8 @@ const config: HardhatUserConfig = {
         network: "citrea",
         chainId: 4114,
         urls: {
-          apiURL: "https://explorer.mainnet.citrea.xyz/api",
-          browserURL: "https://explorer.mainnet.citrea.xyz",
+          apiURL: "https://citreascan.com/api",
+          browserURL: "https://citreascan.com",
         },
       },
     ],
@@ -71,10 +71,10 @@ const config: HardhatUserConfig = {
         ? [{ privateKey: process.env.DEPLOYER_PRIVATE_KEY, balance: "10000000000000000000" }]
         : undefined,
       forking: process.env.FORK_TESTNET ? {
-        url: process.env.CITREA_TESTNET_RPC || "https://rpc.testnet.citrea.xyz",
+        url: process.env.CITREA_TESTNET_RPC || "https://rpc.testnet.citreascan.com",
         enabled: true,
       } : process.env.FORK_MAINNET ? {
-        url: process.env.CITREA_MAINNET_RPC || "https://rpc.mainnet.citrea.xyz",
+        url: process.env.CITREA_MAINNET_RPC || "https://rpc.citreascan.com",
         enabled: true,
       } : undefined,
       chains: {
@@ -101,14 +101,14 @@ const config: HardhatUserConfig = {
       timeout: 300_000,
     },
     // Anvil fork networks - use when Hardhat's built-in forking fails (e.g., Governance tests)
-    // Start Anvil first: anvil --fork-url https://rpc.testnet.citrea.xyz --chain-id 5115
+    // Start Anvil first: anvil --fork-url https://rpc.testnet.citreascan.com --chain-id 5115
     anvilTestnet: {
       url: "http://127.0.0.1:8545",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
       chainId: 5115,
       timeout: 300_000,
     },
-    // Start Anvil first: anvil --fork-url https://rpc.mainnet.citrea.xyz --chain-id 4114
+    // Start Anvil first: anvil --fork-url https://rpc.citreascan.com --chain-id 4114
     anvilMainnet: {
       url: "http://127.0.0.1:8545",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
@@ -116,13 +116,13 @@ const config: HardhatUserConfig = {
       timeout: 300_000,
     },
     citreaTestnet: {
-      url: process.env.CITREA_TESTNET_RPC || "https://rpc.testnet.citrea.xyz",
+      url: process.env.CITREA_TESTNET_RPC || "https://rpc.testnet.citreascan.com",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
       chainId: 5115,
       timeout: 300_000,
     },
     citrea: {
-      url: process.env.CITREA_MAINNET_RPC || "https://rpc.mainnet.citrea.xyz",
+      url: process.env.CITREA_MAINNET_RPC || "https://rpc.citreascan.com",
       accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
       chainId: 4114,
       timeout: 300_000,

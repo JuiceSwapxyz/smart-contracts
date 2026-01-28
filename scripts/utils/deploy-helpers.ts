@@ -61,7 +61,7 @@ export const NETWORK_CONFIGS: Record<string, NetworkConfig> = {
   citreaTestnet: {
     name: "Citrea Testnet",
     folder: "testnet",
-    explorerUrl: "https://explorer.testnet.citrea.xyz",
+    explorerUrl: "https://testnet.citreascan.com",
     isLocal: false,
   },
   citrea: {
