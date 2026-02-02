@@ -6,14 +6,14 @@
  * 2. Individual proofs for each address (for claiming)
  *
  * Usage:
- *   npx ts-node scripts/generateMerkleTree.ts <path-to-addresses.json>
+ *   npx ts-node scripts/compensation/generateMerkleTree.ts [path-to-addresses.json]
  *
  * Input file format (JSON array of addresses):
  *   ["0x123...", "0x456...", ...]
  *
  * Output files:
- *   - merkle-root.json: Contains the root hash
- *   - merkle-proofs.json: Contains proofs for each address
+ *   - data/compensation/merkle-root.json: Contains the root hash
+ *   - data/compensation/merkle-proofs.json: Contains proofs for each address
  */
 
 import { keccak256, encodePacked } from "viem";
@@ -112,7 +112,7 @@ class MerkleTree {
 
 async function main() {
   // Get input file path from command line or use default
-  const inputFile = process.argv[2] || path.join(__dirname, "../data/compensation-addresses.json");
+  const inputFile = process.argv[2] || path.join(__dirname, "../../data/compensation/addresses.json");
 
   console.log("=".repeat(60));
   console.log("Merkle Tree Generator for CompensationClaim");
@@ -121,7 +121,7 @@ async function main() {
   // Check if input file exists
   if (!fs.existsSync(inputFile)) {
     console.error(`\nError: Input file not found: ${inputFile}`);
-    console.log("\nUsage: npx ts-node scripts/generateMerkleTree.ts <path-to-addresses.json>");
+    console.log("\nUsage: npx ts-node scripts/compensation/generateMerkleTree.ts <path-to-addresses.json>");
     console.log("\nInput file format (JSON array of addresses):");
     console.log('  ["0x123...", "0x456...", ...]');
     process.exit(1);
@@ -172,7 +172,7 @@ async function main() {
   };
 
   // Ensure output directory exists
-  const outputDir = path.join(__dirname, "../data");
+  const outputDir = path.join(__dirname, "../../data/compensation");
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
@@ -208,12 +208,11 @@ async function main() {
 
   // Print deployment command hint
   console.log("\nNext steps:");
-  console.log("1. Copy the addresses JSON to: smart-contracts/data/compensation-addresses.json");
-  console.log("2. Fund the deployer wallet with cBTC for gas");
-  console.log("3. Run deployment:");
-  console.log("   npx hardhat run scripts/deployCompensationClaim.ts --network citrea");
-  console.log("4. Transfer tokens to the deployed contract");
-  console.log("5. Share merkle-proofs.json with frontend for user claiming");
+  console.log("1. Fund the deployer wallet with cBTC for gas");
+  console.log("2. Run deployment:");
+  console.log("   npx hardhat run scripts/compensation/deploy.ts --network citrea");
+  console.log("3. Transfer tokens to the deployed contract");
+  console.log("4. Share data/compensation/merkle-proofs.json with frontend for user claiming");
 
   return output;
 }

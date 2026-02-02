@@ -4,15 +4,15 @@
  * Deploys the CompensationClaim contract to Citrea Mainnet.
  *
  * Prerequisites:
- * 1. Generate merkle tree: npx ts-node scripts/generateMerkleTree.ts
+ * 1. Generate merkle tree: npx ts-node scripts/compensation/generateMerkleTree.ts
  * 2. Set DEPLOYER_PRIVATE_KEY in .env
  * 3. Ensure deployer has cBTC for gas
  *
  * Usage:
- *   npx hardhat run scripts/deployCompensationClaim.ts --network citrea
+ *   npx hardhat run scripts/compensation/deploy.ts --network citrea
  *
  * Test with fork:
- *   FORK_MAINNET=true npx hardhat run scripts/deployCompensationClaim.ts --network hardhat
+ *   FORK_MAINNET=true npx hardhat run scripts/compensation/deploy.ts --network hardhat
  */
 
 import { ethers } from "hardhat";
@@ -70,7 +70,7 @@ async function main() {
   }
 
   // Load merkle root
-  const merkleRootPath = path.join(__dirname, "../data/merkle-root.json");
+  const merkleRootPath = path.join(__dirname, "../../data/compensation/merkle-root.json");
   if (!fs.existsSync(merkleRootPath)) {
     console.error("\nError: Merkle root not found. Run generateMerkleTree.ts first.");
     console.log("Expected path:", merkleRootPath);
@@ -170,7 +170,7 @@ async function main() {
   };
 
   // Ensure deployments directory exists
-  const deploymentsDir = path.join(__dirname, "../deployments/mainnet");
+  const deploymentsDir = path.join(__dirname, "../../deployments/mainnet");
   if (!fs.existsSync(deploymentsDir)) {
     fs.mkdirSync(deploymentsDir, { recursive: true });
   }
