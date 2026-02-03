@@ -1,0 +1,16 @@
+{
+  "contractAddress": "0xFFb04e7f99cDE1D38405aF2A4C2FAF5c83004210",
+  "merkleRoot": "0xf3b7ffc1f6bdcec4833b6c4f777dc577290f8940c5896c4e8b7797f82c00dcf3",
+  "jusdAddress": "0x0987D3720D38847ac6dBB9D025B9dE892a3CA35C",
+  "tapfreakAddress": "0xFAEd2b431304426f9320761AfDc698463b6FD8C7",
+  "jusdAmountPerClaim": "10.0",
+  "tapfreakAmountPerClaim": "10.0",
+  "claimDeadline": "2026-03-05T09:13:57.000Z",
+  "totalEligibleAddresses": 86,
+  "totalJusdRequired": "860.0",
+  "totalTapfreakRequired": "860.0",
+  "deployedAt": "2026-02-03T09:14:00.428Z",
+  "deployer": "0x44D17B6205eCA18695001F52b9F475373f16f365",
+  "chainId": 4114,
+  "txHash": "0x9dff5e922a06ceaa8145775ce65d79004405758bcc8b9180a75a760559aca05d"
+}
