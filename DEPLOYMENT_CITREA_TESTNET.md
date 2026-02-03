@@ -14,7 +14,7 @@
 ### JuiceSwapGateway
 **Address:** `0x79EC249234F7f37C1Dec87513774A9E3C3EDFd8C`
 
-**Explorer:** https://explorer.testnet.citrea.xyz/address/0x79EC249234F7f37C1Dec87513774A9E3C3EDFd8C
+**Explorer:** https://testnet.citreascan.com/address/0x79EC249234F7f37C1Dec87513774A9E3C3EDFd8C
 
 **Configuration:**
 - Default Fee: 3000 (0.3%)
@@ -39,7 +39,7 @@
 ## 🧪 Testing the Contract
 
 ### 1. View on Explorer
-Visit: https://explorer.testnet.citrea.xyz/address/0x79EC249234F7f37C1Dec87513774A9E3C3EDFd8C
+Visit: https://testnet.citreascan.com/address/0x79EC249234F7f37C1Dec87513774A9E3C3EDFd8C
 
 ### 2. Read Functions (No gas needed)
 
@@ -181,7 +181,7 @@ The contract is fully deployed and functional at `0x79EC249234F7f37C1Dec87513774
 
 **View the contract:**
 - Dev Explorer: https://dev.testnet.citreascan.com/address/0x79EC249234F7f37C1Dec87513774A9E3C3EDFd8C
-- Main Explorer: https://explorer.testnet.citrea.xyz/address/0x79EC249234F7f37C1Dec87513774A9E3C3EDFd8C
+- Main Explorer: https://testnet.citreascan.com/address/0x79EC249234F7f37C1Dec87513774A9E3C3EDFd8C
 
 **Verification details:**
 - Compiler: v0.8.20+commit.a1b79de6
@@ -227,7 +227,7 @@ The contract is fully deployed and functional at `0x79EC249234F7f37C1Dec87513774
 ## 📞 Support
 
 **Contract Issues:** Create issue in GitHub repo
-**Explorer:** https://explorer.testnet.citrea.xyz
+**Explorer:** https://testnet.citreascan.com
 **Documentation:** See README.md and test files
 
 ---
