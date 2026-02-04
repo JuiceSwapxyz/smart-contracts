@@ -283,7 +283,7 @@ async function main() {
   const verified = await verifyContract(
     gatewayAddress,
     constructorArgs,
-    "contracts/JuiceSwapGateway.sol:JuiceSwapGateway"
+    "contracts/gateway/JuiceSwapGateway.sol:JuiceSwapGateway"
   );
 
   // ============================================

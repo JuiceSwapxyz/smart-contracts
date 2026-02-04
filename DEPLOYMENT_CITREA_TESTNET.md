@@ -193,7 +193,7 @@ The contract is fully deployed and functional at `0x79EC249234F7f37C1Dec87513774
 
 1. **Import Contract ABI**
    ```typescript
-   import JuiceSwapGateway from './artifacts/contracts/JuiceSwapGateway.sol/JuiceSwapGateway.json'
+   import JuiceSwapGateway from './artifacts/contracts/gateway/JuiceSwapGateway.sol/JuiceSwapGateway.json'
 
    const gateway = new ethers.Contract(
      '0x79EC249234F7f37C1Dec87513774A9E3C3EDFd8C',
