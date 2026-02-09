@@ -137,7 +137,7 @@ Campaign NFT contract for early JuiceSwap supporters.
 - **Static metadata**: All tokens share same IPFS metadata
 
 **Details:**
-- **Contract**: `contracts/FirstSqueezerNFT.sol`
+- **Contract**: `contracts/nft/FirstSqueezerNFT.sol`
 - **Network**: Citrea Testnet (Chain ID: 5115)
 - **Standard**: ERC-721
 - **Campaign End**: October 31, 2025 23:59:59 UTC
