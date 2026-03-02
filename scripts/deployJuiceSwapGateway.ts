@@ -76,7 +76,7 @@ async function main() {
 
   // Import addresses from packages (single source of truth)
   const JUSD_ADDRESS = juiceDollarAddresses.juiceDollar;
-  const SV_JUSD_ADDRESS = juiceDollarAddresses.savingsVaultJUSD;
+  const SV_JUSD_ADDRESS = juiceDollarAddresses.savingsVaultV3;
   const JUICE_ADDRESS = juiceDollarAddresses.equity;
   const WCBTC_ADDRESS = WETH9[chainIdNum as ChainId]?.address;
   const SWAP_ROUTER_ADDRESS = dexAddresses.swapRouter02Address;
