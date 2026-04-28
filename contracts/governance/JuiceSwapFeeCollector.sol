@@ -111,7 +111,8 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
      * @param path0 Encoded swap path for token0→JUSD (empty bytes if token0 is JUSD)
      * @param path1 Encoded swap path for token1→JUSD (empty bytes if token1 is JUSD)
      *
-     * @dev Only the authorized collector can call this function (managed by JuiceSwapGovernor via veto system).
+     * @dev Only the authorized collector or owner (JuiceSwapGovernor) can call this function. This allows
+     * keeper automation while preserving governance's ability to collect directly through proposals.
      * This contract must be the factory owner to successfully call collectProtocol() on pools. All collected
      * JUSD is sent directly to JUICE equity and cannot be redirected.
      *
@@ -124,7 +125,7 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
         bytes calldata path0,
         bytes calldata path1
     ) external nonReentrant returns (uint256 jusdReceived) {
-        if (msg.sender != authorizedCollector) revert Unauthorized();
+        if (msg.sender != authorizedCollector && msg.sender != owner()) revert Unauthorized();
         IUniswapV3Pool v3Pool = IUniswapV3Pool(pool);
 
         address token0 = v3Pool.token0();

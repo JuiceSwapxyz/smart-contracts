@@ -58,6 +58,30 @@ export const NETWORK_CONFIGS: Record<string, NetworkConfig> = {
     explorerUrl: "",
     isLocal: true,
   },
+  forkTestnet: {
+    name: "Citrea Testnet Fork",
+    folder: "testnet",
+    explorerUrl: "",
+    isLocal: true,
+  },
+  forkMainnet: {
+    name: "Citrea Mainnet Fork",
+    folder: "mainnet",
+    explorerUrl: "",
+    isLocal: true,
+  },
+  anvilTestnet: {
+    name: "Anvil Citrea Testnet Fork",
+    folder: "testnet",
+    explorerUrl: "",
+    isLocal: true,
+  },
+  anvilMainnet: {
+    name: "Anvil Citrea Mainnet Fork",
+    folder: "mainnet",
+    explorerUrl: "",
+    isLocal: true,
+  },
   citreaTestnet: {
     name: "Citrea Testnet",
     folder: "testnet",
@@ -79,6 +103,22 @@ const GAS_CONFIGS: Record<string, GasConfig> = {
     maxPriorityFeePerGas: "1",
   },
   localhost: {
+    maxFeePerGas: "10",
+    maxPriorityFeePerGas: "1",
+  },
+  forkTestnet: {
+    maxFeePerGas: "10",
+    maxPriorityFeePerGas: "1",
+  },
+  forkMainnet: {
+    maxFeePerGas: "10",
+    maxPriorityFeePerGas: "1",
+  },
+  anvilTestnet: {
+    maxFeePerGas: "10",
+    maxPriorityFeePerGas: "1",
+  },
+  anvilMainnet: {
     maxFeePerGas: "10",
     maxPriorityFeePerGas: "1",
   },

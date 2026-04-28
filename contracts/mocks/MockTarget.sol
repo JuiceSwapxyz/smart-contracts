@@ -22,6 +22,7 @@ contract MockTarget {
     event OwnerSet(address newOwner);
     event Upgraded(address implementation);
     event FunctionCalled(string name);
+    event ProtocolCollected(address recipient, uint128 amount0Requested, uint128 amount1Requested);
 
     /**
      * @notice Configure mock Uniswap V3 pool metadata
@@ -39,6 +40,18 @@ contract MockTarget {
         feeProtocol0 = _feeProtocol0;
         feeProtocol1 = _feeProtocol1;
         emit FeeProtocolSet(_feeProtocol0, _feeProtocol1);
+    }
+
+    /**
+     * @notice Simulate collectProtocol from UniswapV3Pool
+     */
+    function collectProtocol(
+        address recipient,
+        uint128 amount0Requested,
+        uint128 amount1Requested
+    ) external returns (uint128 amount0, uint128 amount1) {
+        emit ProtocolCollected(recipient, amount0Requested, amount1Requested);
+        return (0, 0);
     }
 
     /**

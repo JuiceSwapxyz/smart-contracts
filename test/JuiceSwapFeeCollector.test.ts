@@ -1017,4 +1017,30 @@ describe("JuiceSwapFeeCollector - Pool Fee Administration", function () {
       )
     ).to.be.revertedWithCustomError(feeCollector, "InvalidParams");
   });
+
+  it("allows the owner to collect even when a different keeper is authorized", async function () {
+    const { feeCollector, pool, owner, unauthorized } = await loadFixture(deployPoolFeeAdminFixture);
+    await feeCollector.connect(owner).setCollector(unauthorized.address);
+
+    await expect(
+      feeCollector.connect(owner).collectAndReinvestFees(await pool.getAddress(), "0x", "0x")
+    ).to.emit(pool, "ProtocolCollected");
+  });
+
+  it("allows the authorized keeper to collect", async function () {
+    const { feeCollector, pool, owner, unauthorized } = await loadFixture(deployPoolFeeAdminFixture);
+    await feeCollector.connect(owner).setCollector(unauthorized.address);
+
+    await expect(
+      feeCollector.connect(unauthorized).collectAndReinvestFees(await pool.getAddress(), "0x", "0x")
+    ).to.emit(pool, "ProtocolCollected");
+  });
+
+  it("reverts collection from an address that is neither owner nor authorized keeper", async function () {
+    const { feeCollector, pool, unauthorized } = await loadFixture(deployPoolFeeAdminFixture);
+
+    await expect(
+      feeCollector.connect(unauthorized).collectAndReinvestFees(await pool.getAddress(), "0x", "0x")
+    ).to.be.revertedWithCustomError(feeCollector, "Unauthorized");
+  });
 });
