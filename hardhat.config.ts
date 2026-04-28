@@ -12,6 +12,16 @@ task("create-nft", "Deploy First Squeezer NFT from image to contract")
     await main(taskArgs.image);
   });
 
+task(
+  "create-nft-from-uri",
+  "Deploy First Squeezer NFT using an existing IPFS metadata URI (skips Pinata upload)"
+)
+  .addParam("metadataUri", "Existing IPFS metadata URI (e.g. ipfs://Qm...)")
+  .setAction(async (taskArgs) => {
+    const { deployFromExistingURI } = await import("./scripts/createNFT");
+    await deployFromExistingURI(taskArgs.metadataUri);
+  });
+
 const config: HardhatUserConfig = {
   solidity: {
     compilers: [
@@ -54,7 +64,7 @@ const config: HardhatUserConfig = {
         network: "citrea",
         chainId: 4114,
         urls: {
-          apiURL: "https://citreascan.com/api",
+          apiURL: "https://api.citreascan.com/api",
           browserURL: "https://citreascan.com",
         },
       },
