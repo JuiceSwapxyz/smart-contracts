@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "1.0",
+  "network": {
+    "name": "Citrea Mainnet",
+    "chainId": 4114
+  },
+  "deployment": {
+    "deployedAt": "2026-04-21T16:12:43.000Z",
+    "deployedBy": "0x5486785deb756B3536878e7E41EC8d1f281db653",
+    "blockNumber": 6343693
+  },
+  "contracts": {
+    "FirstSqueezerNFT": {
+      "address": "0x428B878cB6383216AaDc4e8495037E8d31612621",
+      "deploymentTx": "0x0106d2126baffb2ae31224829a08a3c5805b30ab0004c0372bfa8aeb7b3c1d35",
+      "constructorArgs": [
+        "0x23A149E4Fd856ea8CE6Fbf5eaec00BE00EE09447",
+        "ipfs://QmPDaBpVteA9sTFzVWy6VbzwTCusbfChgMPPmuHJm845We",
+        1776988800,
+        1778284799
+      ]
+    }
+  },
+  "references": {
+    "signerAddress": "0x23A149E4Fd856ea8CE6Fbf5eaec00BE00EE09447",
+    "metadataURI": "ipfs://QmPDaBpVteA9sTFzVWy6VbzwTCusbfChgMPPmuHJm845We",
+    "campaignStart": 1776988800,
+    "campaignStartISO": "2026-04-24T00:00:00.000Z",
+    "campaignEnd": 1778284799,
+    "campaignEndISO": "2026-05-08T23:59:59.000Z"
+  },
+  "metadata": {
+    "deployer": "JuiceSwapXyz/smart-contracts",
+    "scriptVersion": "3.0.0",
+    "notes": "Socials-only mainnet campaign. Metadata URI reused from testnet deployment."
+  }
+}

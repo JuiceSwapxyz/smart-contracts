@@ -24,6 +24,8 @@ import "dotenv/config";
  *   - PINATA_JWT in .env (V3 JWT token from Pinata dashboard)
  *   - DEPLOYER_PRIVATE_KEY in .env (wallet with cBTC for production)
  *   - CAMPAIGN_SIGNER_ADDRESS in .env
+ *   - CAMPAIGN_START in .env (unix timestamp in seconds)
+ *   - CAMPAIGN_END in .env (unix timestamp in seconds, must be > CAMPAIGN_START and in the future)
  */
 
 const PINATA_API_URL = "https://api.pinata.cloud";
@@ -37,12 +39,16 @@ interface PinataResponse {
 /**
  * Validate environment variables
  */
-function validateEnvironment(): void {
+function validateEnvironment(options: { requirePinata: boolean } = { requirePinata: true }): void {
   const required = [
-    "PINATA_JWT",
     "DEPLOYER_PRIVATE_KEY",
     "CAMPAIGN_SIGNER_ADDRESS",
+    "CAMPAIGN_START",
+    "CAMPAIGN_END",
   ];
+  if (options.requirePinata) {
+    required.unshift("PINATA_JWT");
+  }
 
   const missing = required.filter((key) => !process.env[key]);
 
@@ -51,6 +57,21 @@ function validateEnvironment(): void {
       `Missing required environment variables: ${missing.join(", ")}\n` +
         "Please configure .env file (see .env.example)"
     );
+  }
+
+  const start = Number(process.env.CAMPAIGN_START);
+  const end = Number(process.env.CAMPAIGN_END);
+
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0 || end <= 0) {
+    throw new Error("CAMPAIGN_START and CAMPAIGN_END must be positive unix timestamps (seconds)");
+  }
+
+  if (start >= end) {
+    throw new Error("CAMPAIGN_START must be strictly less than CAMPAIGN_END");
+  }
+
+  if (end <= Math.floor(Date.now() / 1000)) {
+    throw new Error("CAMPAIGN_END must be in the future");
   }
 }
 
@@ -134,6 +155,8 @@ async function deployContract(metadataURI: string): Promise<string> {
   console.log("Deploying contract...");
 
   const signerAddress = process.env.CAMPAIGN_SIGNER_ADDRESS!;
+  const campaignStart = Number(process.env.CAMPAIGN_START);
+  const campaignEnd = Number(process.env.CAMPAIGN_END);
 
   // Get deployer account
   const [deployer] = await ethers.getSigners();
@@ -145,10 +168,12 @@ async function deployContract(metadataURI: string): Promise<string> {
   console.log("   Balance:", ethers.formatEther(balance), "cBTC");
   console.log("   Signer:", signerAddress);
   console.log("   Metadata:", metadataURI);
+  console.log(`   Campaign start: ${campaignStart} (${new Date(campaignStart * 1000).toISOString()})`);
+  console.log(`   Campaign end:   ${campaignEnd} (${new Date(campaignEnd * 1000).toISOString()})`);
 
   // Deploy contract
   const FirstSqueezerNFT = await ethers.getContractFactory("FirstSqueezerNFT");
-  const nft = await FirstSqueezerNFT.deploy(signerAddress, metadataURI);
+  const nft = await FirstSqueezerNFT.deploy(signerAddress, metadataURI, campaignStart, campaignEnd);
 
   await nft.waitForDeployment();
 
@@ -164,7 +189,9 @@ async function deployContract(metadataURI: string): Promise<string> {
 async function verifyContract(
   contractAddress: string,
   signerAddress: string,
-  metadataURI: string
+  metadataURI: string,
+  campaignStart: number,
+  campaignEnd: number
 ): Promise<void> {
   // Skip verification on local networks
   if (network.name === "hardhat" || network.name === "localhost") {
@@ -176,7 +203,7 @@ async function verifyContract(
   try {
     await hre.run("verify:verify", {
       address: contractAddress,
-      constructorArguments: [signerAddress, metadataURI],
+      constructorArguments: [signerAddress, metadataURI, campaignStart, campaignEnd],
     });
     console.log("Contract verified!\n");
   } catch (error: any) {
@@ -214,7 +241,13 @@ export async function main(imagePath: string) {
     const contractAddress = await deployContract(metadataURI);
 
     // Verify contract
-    await verifyContract(contractAddress, process.env.CAMPAIGN_SIGNER_ADDRESS!, metadataURI);
+    await verifyContract(
+      contractAddress,
+      process.env.CAMPAIGN_SIGNER_ADDRESS!,
+      metadataURI,
+      Number(process.env.CAMPAIGN_START),
+      Number(process.env.CAMPAIGN_END)
+    );
 
     // Output summary
     console.log("=".repeat(70));
@@ -236,6 +269,64 @@ export async function main(imagePath: string) {
     } else {
       console.error("\nDeployment failed:", error.message);
     }
+    throw error;
+  }
+}
+
+/**
+ * Deploy with an existing IPFS metadata URI (skips Pinata upload).
+ *
+ * Use this to reuse an already-pinned metadata JSON (e.g. to point the mainnet
+ * contract at the exact same art/metadata as a prior testnet deploy).
+ *
+ * Requirements:
+ *   - DEPLOYER_PRIVATE_KEY, CAMPAIGN_SIGNER_ADDRESS, CAMPAIGN_START, CAMPAIGN_END in .env
+ *   - metadataURI starting with ipfs:// (e.g. ipfs://Qm...)
+ *   - PINATA_JWT is NOT required on this path
+ */
+export async function deployFromExistingURI(metadataURI: string) {
+  console.log("Deploying First Squeezer NFT from existing metadata URI\n");
+
+  if (!metadataURI) {
+    throw new Error("No metadata URI provided");
+  }
+  if (!/^ipfs:\/\/\S+$/.test(metadataURI)) {
+    throw new Error(`Invalid metadata URI (expected 'ipfs://<cid>'): ${metadataURI}`);
+  }
+
+  try {
+    // Validate environment (without Pinata — no upload on this path)
+    validateEnvironment({ requirePinata: false });
+
+    console.log("Reusing metadata URI:", metadataURI, "\n");
+
+    // Deploy contract
+    const contractAddress = await deployContract(metadataURI);
+
+    // Verify contract
+    await verifyContract(
+      contractAddress,
+      process.env.CAMPAIGN_SIGNER_ADDRESS!,
+      metadataURI,
+      Number(process.env.CAMPAIGN_START),
+      Number(process.env.CAMPAIGN_END)
+    );
+
+    // Output summary
+    console.log("=".repeat(70));
+    console.log("NFT Contract Deployed Successfully!\n");
+    console.log("Metadata URI: ", metadataURI, "(reused)");
+    console.log("Contract:     ", contractAddress);
+    console.log("Network:      ", network.name);
+    console.log("=".repeat(70));
+    console.log("\nNext steps:");
+    console.log("  1. Update api/src/lib/constants/campaigns.ts:");
+    console.log(`     FIRST_SQUEEZER_NFT_CONTRACT = "${contractAddress}"`);
+    console.log("  2. Add citrea entry to ponder.config.ts FirstSqueezerNFT with this address and the deployment block");
+    console.log("  3. Create deployments/mainnet/firstSqueezerNFT.json");
+    console.log("\nDeployment complete!");
+  } catch (error: any) {
+    console.error("\nDeployment failed:", error.message);
     throw error;
   }
 }
