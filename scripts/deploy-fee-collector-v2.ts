@@ -390,6 +390,8 @@ async function main() {
         `Wait at least ${APPLICATION_PERIOD} seconds after each proposal is submitted.`,
         "Execute the proposals in the listed order after their application periods pass.",
         "After execution, verify factory.owner(), authorizedCollector if configured, and each selected pool's slot0().feeProtocol.",
+        "Before the first collectAndReinvestFees call, on every pool in any swap path, call pool.increaseObservationCardinalityNext(twapPeriod / expectedBlockTime + 1) — currently 901 with the contract defaults (1800s TWAP, 2s blocks). This is permissionless and can be done by anyone.",
+        "After bumping cardinality, the buffer is empty until enough swaps land — one observation per block, so on a busy pool the buffer fills in roughly twapPeriod seconds. collectAndReinvestFees reverts with InsufficientCardinality until then.",
       ],
       calls: governanceCalls,
     },
