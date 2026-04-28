@@ -7,7 +7,9 @@ import {
   MockWBTC,
   MockWETH,
   MockUSDT,
-  MockTarget
+  MockTarget,
+  MockFactory,
+  MockRevertingPool
 } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
@@ -805,5 +807,214 @@ describe.skip("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function ()
         "0x"
       );
     });
+  });
+});
+
+describe("JuiceSwapFeeCollector - Pool Fee Administration", function () {
+  async function deployPoolFeeAdminFixture() {
+    const [owner] = await ethers.getSigners();
+    const unauthorized = ethers.Wallet.createRandom().connect(ethers.provider);
+    const routerAddress = ethers.Wallet.createRandom().address;
+    const token1 = ethers.Wallet.createRandom().address;
+    const token2 = ethers.Wallet.createRandom().address;
+    await owner.sendTransaction({ to: unauthorized.address, value: ethers.parseEther("1") });
+
+    const MockWBTC = await ethers.getContractFactory("MockWBTC");
+    const jusd = await MockWBTC.deploy() as unknown as MockWBTC;
+    await jusd.waitForDeployment();
+    const jusdAddress = await jusd.getAddress();
+
+    const MockFactory = await ethers.getContractFactory("MockFactory");
+    const factory = await MockFactory.deploy() as unknown as MockFactory;
+    await factory.waitForDeployment();
+
+    const MockTarget = await ethers.getContractFactory("MockTarget");
+    const pool = await MockTarget.deploy() as unknown as MockTarget;
+    await pool.waitForDeployment();
+    await pool.setPoolInfo(jusdAddress, token1, 3000);
+
+    const secondPool = await MockTarget.deploy() as unknown as MockTarget;
+    await secondPool.waitForDeployment();
+    await secondPool.setPoolInfo(jusdAddress, token2, 3000);
+
+    await factory.setPool(jusdAddress, token1, 3000, await pool.getAddress());
+    await factory.setPool(jusdAddress, token2, 3000, await secondPool.getAddress());
+
+    const JuiceSwapFeeCollector = await ethers.getContractFactory("JuiceSwapFeeCollector");
+    const feeCollector = await JuiceSwapFeeCollector.deploy(
+      jusdAddress,
+      owner.address,
+      routerAddress,
+      await factory.getAddress(),
+      owner.address
+    ) as unknown as JuiceSwapFeeCollector;
+    await feeCollector.waitForDeployment();
+
+    return { feeCollector, factory, jusd, pool, secondPool, owner, unauthorized };
+  }
+
+  it("allows the owner to set a pool protocol fee", async function () {
+    const { feeCollector, pool, owner } = await loadFixture(deployPoolFeeAdminFixture);
+    const poolAddress = await pool.getAddress();
+
+    await expect(feeCollector.connect(owner).setPoolFeeProtocol(poolAddress, 4, 5))
+      .to.emit(feeCollector, "PoolFeeProtocolUpdated")
+      .withArgs(poolAddress, 4, 5)
+      .and.to.emit(pool, "FeeProtocolSet")
+      .withArgs(4, 5);
+
+    expect(await pool.feeProtocol0()).to.equal(4);
+    expect(await pool.feeProtocol1()).to.equal(5);
+  });
+
+  it("allows disabling protocol fees and the full Citrea V3 fee range", async function () {
+    const { feeCollector, pool, owner } = await loadFixture(deployPoolFeeAdminFixture);
+    const poolAddress = await pool.getAddress();
+
+    await feeCollector.connect(owner).setPoolFeeProtocol(poolAddress, 2, 10);
+    expect(await pool.feeProtocol0()).to.equal(2);
+    expect(await pool.feeProtocol1()).to.equal(10);
+
+    await feeCollector.connect(owner).setPoolFeeProtocol(poolAddress, 0, 0);
+    expect(await pool.feeProtocol0()).to.equal(0);
+    expect(await pool.feeProtocol1()).to.equal(0);
+  });
+
+  it("allows the owner to batch set pool protocol fees", async function () {
+    const { feeCollector, pool, secondPool, owner } = await loadFixture(deployPoolFeeAdminFixture);
+    const poolAddress = await pool.getAddress();
+    const secondPoolAddress = await secondPool.getAddress();
+
+    await expect(
+      feeCollector.connect(owner).setPoolFeeProtocols(
+        [poolAddress, secondPoolAddress],
+        [4, 5],
+        [6, 7]
+      )
+    )
+      .to.emit(feeCollector, "PoolFeeProtocolUpdated").withArgs(poolAddress, 4, 6)
+      .and.to.emit(feeCollector, "PoolFeeProtocolUpdated").withArgs(secondPoolAddress, 5, 7);
+
+    expect(await pool.feeProtocol0()).to.equal(4);
+    expect(await pool.feeProtocol1()).to.equal(6);
+    expect(await secondPool.feeProtocol0()).to.equal(5);
+    expect(await secondPool.feeProtocol1()).to.equal(7);
+  });
+
+  it("reverts when a non-owner batch sets pool protocol fees", async function () {
+    const { feeCollector, pool, unauthorized } = await loadFixture(deployPoolFeeAdminFixture);
+
+    await expect(
+      feeCollector.connect(unauthorized).setPoolFeeProtocols(
+        [await pool.getAddress()],
+        [4],
+        [4]
+      )
+    ).to.be.revertedWithCustomError(feeCollector, "OwnableUnauthorizedAccount");
+  });
+
+  it("reverts the entire batch when one element has an out-of-range fee", async function () {
+    const { feeCollector, pool, secondPool, owner } = await loadFixture(deployPoolFeeAdminFixture);
+    const poolAddress = await pool.getAddress();
+    const secondPoolAddress = await secondPool.getAddress();
+
+    // Sanity: both pools start at 0.
+    expect(await pool.feeProtocol0()).to.equal(0);
+
+    // Element 0 is valid; element 1's fp0=11 is one past the upper bound.
+    await expect(
+      feeCollector.connect(owner).setPoolFeeProtocols(
+        [poolAddress, secondPoolAddress],
+        [4, 11],
+        [4, 4]
+      )
+    ).to.be.revertedWithCustomError(feeCollector, "InvalidParams");
+
+    // Element 0's storage must NOT have been committed.
+    expect(await pool.feeProtocol0()).to.equal(0);
+    expect(await pool.feeProtocol1()).to.equal(0);
+    expect(await secondPool.feeProtocol0()).to.equal(0);
+    expect(await secondPool.feeProtocol1()).to.equal(0);
+  });
+
+  it("reverts the entire batch when a downstream pool reverts mid-iteration", async function () {
+    const { feeCollector, factory, jusd, pool, owner } = await loadFixture(deployPoolFeeAdminFixture);
+    const poolAddress = await pool.getAddress();
+    const revertingPoolToken1 = ethers.Wallet.createRandom().address;
+
+    const MockRevertingPoolFactory = await ethers.getContractFactory("MockRevertingPool");
+    const revertingPool = await MockRevertingPoolFactory.deploy(
+      await jusd.getAddress(),
+      revertingPoolToken1,
+      3000
+    ) as unknown as MockRevertingPool;
+    await revertingPool.waitForDeployment();
+    const revertingPoolAddress = await revertingPool.getAddress();
+    await factory.setPool(await jusd.getAddress(), revertingPoolToken1, 3000, revertingPoolAddress);
+
+    expect(await pool.feeProtocol0()).to.equal(0);
+
+    await expect(
+      feeCollector.connect(owner).setPoolFeeProtocols(
+        [poolAddress, revertingPoolAddress],
+        [4, 4],
+        [4, 4]
+      )
+    ).to.be.revertedWithCustomError(revertingPool, "PoolReverted");
+
+    // Element 0 succeeded inside the loop, but the EVM reverts the whole tx —
+    // its storage write must be rolled back.
+    expect(await pool.feeProtocol0()).to.equal(0);
+    expect(await pool.feeProtocol1()).to.equal(0);
+  });
+
+  it("reverts when the target is not a pool registered in the configured factory", async function () {
+    const { feeCollector, jusd, owner } = await loadFixture(deployPoolFeeAdminFixture);
+
+    const MockTarget = await ethers.getContractFactory("MockTarget");
+    const unregisteredPool = await MockTarget.deploy() as unknown as MockTarget;
+    await unregisteredPool.waitForDeployment();
+    await unregisteredPool.setPoolInfo(await jusd.getAddress(), ethers.Wallet.createRandom().address, 3000);
+
+    await expect(
+      feeCollector.connect(owner).setPoolFeeProtocol(await unregisteredPool.getAddress(), 4, 4)
+    ).to.be.revertedWithCustomError(feeCollector, "PoolDoesNotExist");
+  });
+
+  it("reverts when a non-owner sets pool protocol fees", async function () {
+    const { feeCollector, pool, unauthorized } = await loadFixture(deployPoolFeeAdminFixture);
+
+    await expect(
+      feeCollector.connect(unauthorized).setPoolFeeProtocol(await pool.getAddress(), 4, 4)
+    ).to.be.revertedWithCustomError(feeCollector, "OwnableUnauthorizedAccount");
+  });
+
+  it("reverts invalid pool fee parameters", async function () {
+    const { feeCollector, pool, owner } = await loadFixture(deployPoolFeeAdminFixture);
+    const poolAddress = await pool.getAddress();
+
+    await expect(
+      feeCollector.connect(owner).setPoolFeeProtocol(ethers.ZeroAddress, 4, 4)
+    ).to.be.revertedWithCustomError(feeCollector, "InvalidAddress");
+
+    await expect(
+      feeCollector.connect(owner).setPoolFeeProtocol(poolAddress, 1, 4)
+    ).to.be.revertedWithCustomError(feeCollector, "InvalidParams");
+
+    await expect(
+      feeCollector.connect(owner).setPoolFeeProtocol(poolAddress, 4, 11)
+    ).to.be.revertedWithCustomError(feeCollector, "InvalidParams");
+  });
+
+  it("reverts batch calls with mismatched array lengths", async function () {
+    const { feeCollector, pool, secondPool, owner } = await loadFixture(deployPoolFeeAdminFixture);
+
+    await expect(
+      feeCollector.connect(owner).setPoolFeeProtocols(
+        [await pool.getAddress(), await secondPool.getAddress()],
+        [4],
+        [4, 5]
+      )
+    ).to.be.revertedWithCustomError(feeCollector, "InvalidParams");
   });
 });

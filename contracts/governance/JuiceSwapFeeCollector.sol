@@ -71,6 +71,7 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     event CollectorUpdated(address indexed oldCollector, address indexed newCollector);
     event FactoryOwnerUpdated(address indexed newOwner);
     event FeeAmountEnabled(uint24 indexed fee, int24 indexed tickSpacing);
+    event PoolFeeProtocolUpdated(address indexed pool, uint8 feeProtocol0, uint8 feeProtocol1);
     event ExpectedBlockTimeUpdated(uint32 blockTime);
 
     error InvalidAddress();
@@ -352,6 +353,45 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
     }
 
     /**
+     * @notice Set the protocol fee fraction for a V3 pool
+     * @param pool The pool to update
+     * @param feeProtocol0 Protocol fee for token0 fees. Use 0 to disable or 2-10 for a 1/N share.
+     * @param feeProtocol1 Protocol fee for token1 fees. Use 0 to disable or 2-10 for a 1/N share.
+     *
+     * @dev Only callable by owner (JuiceSwapGovernor). This contract must be the factory owner
+     * for the underlying pool call to succeed.
+     */
+    function setPoolFeeProtocol(
+        address pool,
+        uint8 feeProtocol0,
+        uint8 feeProtocol1
+    ) external onlyOwner {
+        _setPoolFeeProtocol(pool, feeProtocol0, feeProtocol1);
+    }
+
+    /**
+     * @notice Set the protocol fee fraction for multiple V3 pools
+     * @param pools The pools to update
+     * @param feeProtocol0 Protocol fees for each pool's token0 fees
+     * @param feeProtocol1 Protocol fees for each pool's token1 fees
+     *
+     * @dev Only callable by owner (JuiceSwapGovernor). This batches per-pool V3 fee
+     * activation while keeping this contract as the factory owner.
+     */
+    function setPoolFeeProtocols(
+        address[] calldata pools,
+        uint8[] calldata feeProtocol0,
+        uint8[] calldata feeProtocol1
+    ) external onlyOwner {
+        uint256 length = pools.length;
+        if (length != feeProtocol0.length || length != feeProtocol1.length) revert InvalidParams();
+
+        for (uint256 i = 0; i < length; i++) {
+            _setPoolFeeProtocol(pools[i], feeProtocol0[i], feeProtocol1[i]);
+        }
+    }
+
+    /**
      * @notice Transfer factory ownership to a new address
      * @param _owner The new factory owner address
      *
@@ -377,5 +417,28 @@ contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
         IUniswapV3Factory(FACTORY).enableFeeAmount(fee, tickSpacing);
 
         emit FeeAmountEnabled(fee, tickSpacing);
+    }
+
+    function _setPoolFeeProtocol(address pool, uint8 feeProtocol0, uint8 feeProtocol1) internal {
+        if (pool == address(0)) revert InvalidAddress();
+        _validateFeeProtocol(feeProtocol0);
+        _validateFeeProtocol(feeProtocol1);
+
+        IUniswapV3Pool v3Pool = IUniswapV3Pool(pool);
+        address token0 = v3Pool.token0();
+        address token1 = v3Pool.token1();
+        uint24 poolFee = v3Pool.fee();
+
+        if (IUniswapV3Factory(FACTORY).getPool(token0, token1, poolFee) != pool) {
+            revert PoolDoesNotExist();
+        }
+
+        v3Pool.setFeeProtocol(feeProtocol0, feeProtocol1);
+
+        emit PoolFeeProtocolUpdated(pool, feeProtocol0, feeProtocol1);
+    }
+
+    function _validateFeeProtocol(uint8 feeProtocol) internal pure {
+        if (feeProtocol != 0 && (feeProtocol < 2 || feeProtocol > 10)) revert InvalidParams();
     }
 }
