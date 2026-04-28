@@ -1,11 +1,11 @@
-// Fork dry-run for the new JuiceSwapFeeCollector against Citrea mainnet state.
+// Fork dry-run for the new JuiceSwapFeeCollectorV2 against Citrea mainnet state.
 // Run with:
-//   FORK_MAINNET=1 npx hardhat run scripts/forkTestFeeCollector.ts
+//   FORK_MAINNET=1 npx hardhat run scripts/forkTestFeeCollectorV2.ts
 //
 // What this verifies on a real Citrea fork:
-//   1. The new FeeCollector deploys successfully against the real JUSD/JUICE/router/factory.
-//   2. The Governor (impersonated) can transfer V3 factory ownership to the new FeeCollector.
-//   3. setPoolFeeProtocols() on the new FeeCollector successfully sets feeProtocol on
+//   1. The new JuiceSwapFeeCollectorV2 deploys successfully against the real JUSD/JUICE/router/factory.
+//   2. The Governor (impersonated) can transfer V3 factory ownership to JuiceSwapFeeCollectorV2.
+//   3. setPoolFeeProtocols() on JuiceSwapFeeCollectorV2 successfully sets feeProtocol on
 //      multiple real Uniswap V3 pools — verified via slot0() reads.
 //   4. The factory-registration check correctly rejects a real V3 pool from a fake
 //      factory (PoolDoesNotExist).
@@ -74,25 +74,25 @@ async function main() {
   }
   console.log("all test pools currently have feeProtocol=0 ✓");
 
-  // ── 1. Deploy the new FeeCollector via anvil's default account 0.
+  // ── 1. Deploy JuiceSwapFeeCollectorV2 via anvil's default account 0.
   const ANVIL_KEY0 = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
   const deployer = new ethers.Wallet(ANVIL_KEY0, provider);
   console.log(`\ndeployer=${deployer.address}`);
 
   // Pull artifact from hardhat's compiled output (avoids hardhat's wallet plumbing).
-  const artifact = await import("../artifacts/contracts/governance/JuiceSwapFeeCollector.sol/JuiceSwapFeeCollector.json");
+  const artifact = await import("../artifacts/contracts/governance/JuiceSwapFeeCollectorV2.sol/JuiceSwapFeeCollectorV2.json");
   const FeeCollectorFactory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, deployer);
   const newFeeCollector = await FeeCollectorFactory.deploy(JUSD, JUICE, ROUTER, FACTORY, GOVERNOR);
   await newFeeCollector.waitForDeployment();
   const newFCAddress = await newFeeCollector.getAddress();
-  console.log(`new FeeCollector deployed: ${newFCAddress}`);
+  console.log(`new JuiceSwapFeeCollectorV2 deployed: ${newFCAddress}`);
 
   // ── 2. Impersonate the Governor and fund it for gas (anvil cheat codes).
   await provider.send("anvil_impersonateAccount", [GOVERNOR]);
   await provider.send("anvil_setBalance", [GOVERNOR, "0x56BC75E2D63100000"]);
   const governor = await provider.getSigner(GOVERNOR);
 
-  // ── 3. Governor transfers factory ownership to the new FeeCollector.
+  // ── 3. Governor transfers factory ownership to JuiceSwapFeeCollectorV2.
   console.log(`\nGovernor -> Factory.setOwner(newFeeCollector)`);
   const factoryRW = new ethers.Contract(FACTORY, FACTORY_ABI, governor);
   await (await factoryRW.setOwner(newFCAddress)).wait();
@@ -133,11 +133,11 @@ async function main() {
     }
   }
 
-  // ── 7. Cross-factory rejection — deploy a fresh FeeCollector pointing at a wrong
+  // ── 7. Cross-factory rejection — deploy a fresh JuiceSwapFeeCollectorV2 pointing at a wrong
   // factory address (we use a random EOA-as-factory; getPool() will revert/return zero,
   // either way the registration check must reject).
   console.log(`\n--- cross-factory rejection test ---`);
-  // Deploy a FeeCollector whose FACTORY is a different (real) EOA-style address.
+  // Deploy a JuiceSwapFeeCollectorV2 whose FACTORY is a different (real) EOA-style address.
   // We use a freshly funded signer to avoid nonce confusion with the earlier deployer.
   const ANVIL_KEY1 = "0x59c6e1f6149a2d1b3b2c22a19a45d36f2b7c91f72a96b4f0a6a9c8b6a8a0a3a8";
   // Use a deterministic deployer derived from anvil account index 1.
@@ -153,7 +153,7 @@ async function main() {
   const isolatedFC = await isolatedFCFactory.deploy(JUSD, JUICE, ROUTER, wrongFactory, deployer2.address);
   await isolatedFC.waitForDeployment();
   const isolatedFCAddr = await isolatedFC.getAddress();
-  console.log(`isolated FeeCollector (FACTORY=EOA ${wrongFactory.slice(0,10)}...): ${isolatedFCAddr}`);
+  console.log(`isolated JuiceSwapFeeCollectorV2 (FACTORY=EOA ${wrongFactory.slice(0,10)}...): ${isolatedFCAddr}`);
 
   // Use a static call so we get the genuine revert reason rather than a nonce error.
   const iface = new ethers.Interface(artifact.abi);

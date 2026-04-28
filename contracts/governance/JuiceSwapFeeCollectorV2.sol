@@ -37,14 +37,14 @@ interface IUniswapV3Factory {
 }
 
 /**
- * @title JuiceSwapFeeCollector
+ * @title JuiceSwapFeeCollectorV2
  * @notice Automated protocol fee collection for JuiceSwap with TWAP-based frontrunning protection.
  *
  * This contract collects protocol fees from Uniswap V3 pools, swaps them to JUSD using
  * TWAP oracle price validation, and deposits the JUSD to JUICE Equity to increase the
  * JUICE token price. It is owned and controlled by JuiceSwapGovernor.
  */
-contract JuiceSwapFeeCollector is Ownable, ReentrancyGuard {
+contract JuiceSwapFeeCollectorV2 is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using Path for bytes;
     using BytesLib for bytes;

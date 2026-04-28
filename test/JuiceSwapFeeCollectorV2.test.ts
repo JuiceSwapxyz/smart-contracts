@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import {
-  JuiceSwapFeeCollector,
+  JuiceSwapFeeCollectorV2,
   JuiceDollar,
   Equity,
   MockWBTC,
@@ -218,7 +218,7 @@ async function executeSwap(
   });
 }
 
-describe.skip("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function () {
+describe.skip("JuiceSwapFeeCollectorV2 - Real Uniswap V3 Integration", function () {
   const MIN_APPLICATION_PERIOD = 10 * 24 * 60 * 60; // 10 days
 
   /**
@@ -331,14 +331,14 @@ describe.skip("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function ()
     // 5. DEPLOY FEE COLLECTOR
     // ============================================================
 
-    const JuiceSwapFeeCollector = await ethers.getContractFactory("JuiceSwapFeeCollector");
-    const feeCollector = await JuiceSwapFeeCollector.deploy(
+    const JuiceSwapFeeCollectorV2 = await ethers.getContractFactory("JuiceSwapFeeCollectorV2");
+    const feeCollector = await JuiceSwapFeeCollectorV2.deploy(
       jusdAddr,
       await juice.getAddress(),
       routerAddr,
       factoryAddr,
       owner.address
-    ) as unknown as JuiceSwapFeeCollector;
+    ) as unknown as JuiceSwapFeeCollectorV2;
     await feeCollector.waitForDeployment();
 
     // ============================================================
@@ -810,7 +810,7 @@ describe.skip("JuiceSwapFeeCollector - Real Uniswap V3 Integration", function ()
   });
 });
 
-describe("JuiceSwapFeeCollector - Pool Fee Administration", function () {
+describe("JuiceSwapFeeCollectorV2 - Pool Fee Administration", function () {
   async function deployPoolFeeAdminFixture() {
     const [owner] = await ethers.getSigners();
     const unauthorized = ethers.Wallet.createRandom().connect(ethers.provider);
@@ -840,14 +840,14 @@ describe("JuiceSwapFeeCollector - Pool Fee Administration", function () {
     await factory.setPool(jusdAddress, token1, 3000, await pool.getAddress());
     await factory.setPool(jusdAddress, token2, 3000, await secondPool.getAddress());
 
-    const JuiceSwapFeeCollector = await ethers.getContractFactory("JuiceSwapFeeCollector");
-    const feeCollector = await JuiceSwapFeeCollector.deploy(
+    const JuiceSwapFeeCollectorV2 = await ethers.getContractFactory("JuiceSwapFeeCollectorV2");
+    const feeCollector = await JuiceSwapFeeCollectorV2.deploy(
       jusdAddress,
       owner.address,
       routerAddress,
       await factory.getAddress(),
       owner.address
-    ) as unknown as JuiceSwapFeeCollector;
+    ) as unknown as JuiceSwapFeeCollectorV2;
     await feeCollector.waitForDeployment();
 
     return { feeCollector, factory, jusd, pool, secondPool, owner, unauthorized };

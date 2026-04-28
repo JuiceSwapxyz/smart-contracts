@@ -204,7 +204,9 @@ const canManipulateTime = network.name === "hardhat" || isAnvilNetwork; // Hardh
 
     // Load addresses from deployment file
     governorAddress = GOVERNANCE.contracts.JuiceSwapGovernor.address;
-    feeCollectorAddress = GOVERNANCE.contracts.JuiceSwapFeeCollector.address;
+    feeCollectorAddress =
+      GOVERNANCE.contracts.JuiceSwapFeeCollectorV2?.address ||
+      GOVERNANCE.contracts.JuiceSwapFeeCollector.address;
 
     console.log(`  Governor: ${governorAddress}`);
     console.log(`  FeeCollector: ${feeCollectorAddress}`);

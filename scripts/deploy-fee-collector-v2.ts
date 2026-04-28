@@ -140,7 +140,7 @@ async function main() {
   }
 
   console.log("========================================");
-  console.log("   Deploy JuiceSwapFeeCollector V2      ");
+  console.log("   Deploy JuiceSwapFeeCollectorV2      ");
   console.log("========================================\n");
 
   const [deployer] = await ethers.getSigners();
@@ -209,8 +209,8 @@ async function main() {
   const maxFeePerGas = ethers.parseUnits(gasConfig.maxFeePerGas, "gwei");
   await validateMinimumBalance(deployer.address, estimatedTotalGas * maxFeePerGas);
 
-  console.log("Deploying JuiceSwapFeeCollector V2...");
-  const FeeCollectorFactory = await ethers.getContractFactory("JuiceSwapFeeCollector");
+  console.log("Deploying JuiceSwapFeeCollectorV2...");
+  const FeeCollectorFactory = await ethers.getContractFactory("JuiceSwapFeeCollectorV2");
   const constructorArgs = [
     jusdAddress,
     juiceAddress,
@@ -229,7 +229,7 @@ async function main() {
   await feeCollectorTx?.wait(confirmations);
 
   const newFeeCollectorAddress = await feeCollector.getAddress();
-  console.log(`  New FeeCollector V2: ${newFeeCollectorAddress}\n`);
+  console.log(`  New JuiceSwapFeeCollectorV2: ${newFeeCollectorAddress}\n`);
 
   const deployedOwner = ethers.getAddress(await feeCollector.owner());
   if (deployedOwner.toLowerCase() !== governorAddress.toLowerCase()) {
@@ -268,29 +268,29 @@ async function main() {
     governanceCalls.push(buildGovernanceCall(
       governanceCalls.length + 1,
       "transfer-v3-factory-owner-to-fee-collector-v2",
-      "Make FeeCollector V2 the V3 factory owner so it can call pool admin and collectProtocol.",
+      "Make JuiceSwapFeeCollectorV2 the V3 factory owner so it can call pool admin and collectProtocol.",
       factoryAddress,
       factoryInterface.encodeFunctionData("setOwner", [newFeeCollectorAddress]),
-      "Transfer V3 factory ownership to FeeCollector V2",
+      "Transfer V3 factory ownership to JuiceSwapFeeCollectorV2",
       governorInterface
     ));
   } else if (factoryOwner.toLowerCase() === oldFeeCollectorAddress.toLowerCase()) {
     governanceCalls.push(buildGovernanceCall(
       governanceCalls.length + 1,
       "old-fee-collector-transfers-v3-factory-owner-to-v2",
-      "Use the existing Governor-owned FeeCollector to hand V3 factory ownership to FeeCollector V2.",
+      "Use the existing Governor-owned FeeCollector to hand V3 factory ownership to JuiceSwapFeeCollectorV2.",
       oldFeeCollectorAddress,
       oldFeeCollectorInterface.encodeFunctionData("setFactoryOwner", [newFeeCollectorAddress]),
-      "Transfer V3 factory ownership from old FeeCollector to FeeCollector V2",
+      "Transfer V3 factory ownership from old FeeCollector to JuiceSwapFeeCollectorV2",
       governorInterface
     ));
   } else if (factoryOwner.toLowerCase() === newFeeCollectorAddress.toLowerCase()) {
-    console.log("Factory already owned by the new FeeCollector; no ownership proposal needed.");
+    console.log("Factory already owned by JuiceSwapFeeCollectorV2; no ownership proposal needed.");
   } else {
     const message =
       `Unexpected V3 factory owner: ${factoryOwner}. ` +
       `Expected Governor ${governorAddress}, old FeeCollector ${oldFeeCollectorAddress}, ` +
-      `or new FeeCollector ${newFeeCollectorAddress}. Refusing to generate an incomplete plan.`;
+      `or JuiceSwapFeeCollectorV2 ${newFeeCollectorAddress}. Refusing to generate an incomplete plan.`;
     if (!FORCE_UNEXPECTED_FACTORY_OWNER) {
       throw new Error(`${message} Set FORCE_UNEXPECTED_FACTORY_OWNER=true to bypass.`);
     }
@@ -299,18 +299,18 @@ async function main() {
 
   if (!authorizedCollector) {
     console.log("No AUTHORIZED_COLLECTOR provided; skipping setCollector proposal.");
-    console.log("Governor can still collect because it owns FeeCollector V2.");
+    console.log("Governor can still collect because it owns JuiceSwapFeeCollectorV2.");
   } else if (authorizedCollector.toLowerCase() === governorAddress.toLowerCase()) {
     console.log("AUTHORIZED_COLLECTOR is the Governor; skipping redundant setCollector proposal.");
-    console.log("Governor can already collect because it owns FeeCollector V2.");
+    console.log("Governor can already collect because it owns JuiceSwapFeeCollectorV2.");
   } else {
     governanceCalls.push(buildGovernanceCall(
       governanceCalls.length + 1,
       "set-authorized-collector",
-      "Authorize a keeper account. The Governor can also collect because it owns FeeCollector V2.",
+      "Authorize a keeper account. The Governor can also collect because it owns JuiceSwapFeeCollectorV2.",
       newFeeCollectorAddress,
       feeCollectorInterface.encodeFunctionData("setCollector", [authorizedCollector]),
-      `Set FeeCollector V2 authorized collector to ${authorizedCollector}`,
+      `Set JuiceSwapFeeCollectorV2 authorized collector to ${authorizedCollector}`,
       governorInterface
     ));
   }
@@ -400,7 +400,7 @@ async function main() {
     },
     collectionNote: {
       governorCanCollect:
-        "FeeCollector V2 permits owner() to call collectAndReinvestFees, so the Governor can collect through a proposal even when a keeper is authorized.",
+        "JuiceSwapFeeCollectorV2 permits owner() to call collectAndReinvestFees, so the Governor can collect through a proposal even when a keeper is authorized.",
       keeperCanCollect:
         "The setCollector proposal authorizes the selected collector to call collectAndReinvestFees directly.",
       collectCall:
@@ -436,7 +436,7 @@ async function main() {
     await verifyContract(
       newFeeCollectorAddress,
       constructorArgs,
-      "contracts/governance/JuiceSwapFeeCollector.sol:JuiceSwapFeeCollector"
+      "contracts/governance/JuiceSwapFeeCollectorV2.sol:JuiceSwapFeeCollectorV2"
     );
   } else {
     console.log("Skipping explorer verification (VERIFY_CONTRACT=false).");
