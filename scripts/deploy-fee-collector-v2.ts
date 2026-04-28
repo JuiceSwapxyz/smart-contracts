@@ -8,7 +8,6 @@ import {
   getGasConfig,
   getNetworkConfig,
   validateContractDeployed,
-  validateMinimumBalance,
   verifyContract,
 } from "./utils/deploy-helpers";
 
@@ -204,10 +203,6 @@ async function main() {
   await validateContractDeployed(juiceAddress, "JUICE");
   await validateContractDeployed(factoryAddress, "V3 Factory");
   await validateContractDeployed(swapRouterAddress, "SwapRouter");
-
-  const estimatedTotalGas = 3500000n;
-  const maxFeePerGas = ethers.parseUnits(gasConfig.maxFeePerGas, "gwei");
-  await validateMinimumBalance(deployer.address, estimatedTotalGas * maxFeePerGas);
 
   console.log("Deploying JuiceSwapFeeCollectorV2...");
   const FeeCollectorFactory = await ethers.getContractFactory("JuiceSwapFeeCollectorV2");
