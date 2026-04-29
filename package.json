@@ -26,6 +26,8 @@
     "deploy:gov:testnet": "hardhat run scripts/deploy-governance.ts --network citreaTestnet",
     "deploy:gov:mainnet": "hardhat run scripts/deploy-governance.ts --network citrea",
     "deploy:fee-collector-v2": "hardhat run scripts/deploy-fee-collector-v2.ts",
+    "deploy:fee-collector-v2:fork:testnet": "FORK_TESTNET=true hardhat run scripts/deploy-fee-collector-v2.ts --network hardhat",
+    "deploy:fee-collector-v2:fork:mainnet": "FORK_MAINNET=true hardhat run scripts/deploy-fee-collector-v2.ts --network hardhat",
     "deploy:fee-collector-v2:testnet": "hardhat run scripts/deploy-fee-collector-v2.ts --network citreaTestnet",
     "deploy:fee-collector-v2:mainnet": "hardhat run scripts/deploy-fee-collector-v2.ts --network citrea",
     "verify:gov:testnet": "DEPLOYMENT_FILE_PATH=./deployments/testnet/governance.json npx hardhat run scripts/verifyContracts.ts --network citreaTestnet"

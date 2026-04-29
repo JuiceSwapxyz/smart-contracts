@@ -414,9 +414,15 @@ async function main() {
     const deployDir = path.join(__dirname, "../deployments", networkConfig.folder);
     fs.mkdirSync(deployDir, { recursive: true });
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    // Mark fork-test artifacts so they can't be confused with real deploys when
+    // they land in deployments/mainnet/ or deployments/testnet/.
+    const filePrefix =
+      networkConfig.isLocal && (process.env.FORK_MAINNET || process.env.FORK_TESTNET)
+        ? "fork-"
+        : "";
     const outputFile =
       process.env.OUTPUT_FILE ||
-      path.join(deployDir, `fee-collector-v2-${timestamp}.json`);
+      path.join(deployDir, `${filePrefix}fee-collector-v2-${timestamp}.json`);
     if (fs.existsSync(outputFile) && !OVERWRITE_DEPLOYMENT) {
       throw new Error(
         `Refusing to overwrite existing deployment file: ${outputFile}. ` +

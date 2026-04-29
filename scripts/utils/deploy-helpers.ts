@@ -136,11 +136,22 @@ const GAS_CONFIGS: Record<string, GasConfig> = {
 // Configuration Getters
 // ============================================
 
+// When `--network hardhat` is paired with FORK_MAINNET / FORK_TESTNET, the on-chain
+// state is a fork of mainnet / testnet, so deployment outputs and configs should use
+// those folders — not the default "localhost".
+function effectiveNetworkName(networkName: string): string {
+  if (networkName === "hardhat") {
+    if (process.env.FORK_MAINNET) return "forkMainnet";
+    if (process.env.FORK_TESTNET) return "forkTestnet";
+  }
+  return networkName;
+}
+
 /**
  * Get gas configuration for a specific network
  */
 export function getGasConfig(networkName: string): GasConfig {
-  const config = GAS_CONFIGS[networkName];
+  const config = GAS_CONFIGS[effectiveNetworkName(networkName)];
   if (!config) {
     console.warn(`⚠️  Unknown network "${networkName}", using citreaTestnet gas config`);
     return GAS_CONFIGS.citreaTestnet;
@@ -152,7 +163,7 @@ export function getGasConfig(networkName: string): GasConfig {
  * Get network configuration
  */
 export function getNetworkConfig(networkName: string): NetworkConfig {
-  const config = NETWORK_CONFIGS[networkName];
+  const config = NETWORK_CONFIGS[effectiveNetworkName(networkName)];
   if (!config) {
     console.warn(`⚠️  Unknown network "${networkName}", using citreaTestnet config`);
     return NETWORK_CONFIGS.citreaTestnet;
