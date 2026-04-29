@@ -58,6 +58,30 @@ export const NETWORK_CONFIGS: Record<string, NetworkConfig> = {
     explorerUrl: "",
     isLocal: true,
   },
+  forkTestnet: {
+    name: "Citrea Testnet Fork",
+    folder: "testnet",
+    explorerUrl: "",
+    isLocal: true,
+  },
+  forkMainnet: {
+    name: "Citrea Mainnet Fork",
+    folder: "mainnet",
+    explorerUrl: "",
+    isLocal: true,
+  },
+  anvilTestnet: {
+    name: "Anvil Citrea Testnet Fork",
+    folder: "testnet",
+    explorerUrl: "",
+    isLocal: true,
+  },
+  anvilMainnet: {
+    name: "Anvil Citrea Mainnet Fork",
+    folder: "mainnet",
+    explorerUrl: "",
+    isLocal: true,
+  },
   citreaTestnet: {
     name: "Citrea Testnet",
     folder: "testnet",
@@ -82,6 +106,22 @@ const GAS_CONFIGS: Record<string, GasConfig> = {
     maxFeePerGas: "10",
     maxPriorityFeePerGas: "1",
   },
+  forkTestnet: {
+    maxFeePerGas: "10",
+    maxPriorityFeePerGas: "1",
+  },
+  forkMainnet: {
+    maxFeePerGas: "10",
+    maxPriorityFeePerGas: "1",
+  },
+  anvilTestnet: {
+    maxFeePerGas: "10",
+    maxPriorityFeePerGas: "1",
+  },
+  anvilMainnet: {
+    maxFeePerGas: "10",
+    maxPriorityFeePerGas: "1",
+  },
   citreaTestnet: {
     maxFeePerGas: "0.01",
     maxPriorityFeePerGas: "0.001",
@@ -96,11 +136,22 @@ const GAS_CONFIGS: Record<string, GasConfig> = {
 // Configuration Getters
 // ============================================
 
+// When `--network hardhat` is paired with FORK_MAINNET / FORK_TESTNET, the on-chain
+// state is a fork of mainnet / testnet, so deployment outputs and configs should use
+// those folders — not the default "localhost".
+function effectiveNetworkName(networkName: string): string {
+  if (networkName === "hardhat") {
+    if (process.env.FORK_MAINNET) return "forkMainnet";
+    if (process.env.FORK_TESTNET) return "forkTestnet";
+  }
+  return networkName;
+}
+
 /**
  * Get gas configuration for a specific network
  */
 export function getGasConfig(networkName: string): GasConfig {
-  const config = GAS_CONFIGS[networkName];
+  const config = GAS_CONFIGS[effectiveNetworkName(networkName)];
   if (!config) {
     console.warn(`⚠️  Unknown network "${networkName}", using citreaTestnet gas config`);
     return GAS_CONFIGS.citreaTestnet;
@@ -112,7 +163,7 @@ export function getGasConfig(networkName: string): GasConfig {
  * Get network configuration
  */
 export function getNetworkConfig(networkName: string): NetworkConfig {
-  const config = NETWORK_CONFIGS[networkName];
+  const config = NETWORK_CONFIGS[effectiveNetworkName(networkName)];
   if (!config) {
     console.warn(`⚠️  Unknown network "${networkName}", using citreaTestnet config`);
     return NETWORK_CONFIGS.citreaTestnet;

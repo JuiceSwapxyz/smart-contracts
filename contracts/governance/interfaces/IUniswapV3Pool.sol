@@ -23,6 +23,8 @@ interface IUniswapV3Pool {
         uint128 amount1Requested
     ) external returns (uint128 amount0, uint128 amount1);
 
+    function setFeeProtocol(uint8 feeProtocol0, uint8 feeProtocol1) external;
+
     // ============ Oracle Functions ============
 
     function observe(uint32[] calldata secondsAgos)

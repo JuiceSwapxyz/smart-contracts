@@ -16,14 +16,14 @@ import {
 } from "./utils/deploy-helpers";
 
 /**
- * Deploy JuiceSwapGovernor and JuiceSwapFeeCollector, optionally transferring
+ * Deploy JuiceSwapGovernor and JuiceSwapFeeCollectorV2, optionally transferring
  * ownership of V3 Factory, V2 Factory, ProxyAdmin, and TokenFactory to the Governor.
  *
  * This script:
  * 1. Gets addresses from canonical packages (@juicedollar/jusd, @juiceswapxyz/sdk-core, @juiceswapxyz/launchpad)
  * 2. Checks deployer balance
  * 3. Deploys JuiceSwapGovernor
- * 4. Deploys JuiceSwapFeeCollector (owned by Governor)
+ * 4. Deploys JuiceSwapFeeCollectorV2 (owned by Governor)
  * 5. Optionally transfers V3 Factory ownership to Governor (if TRANSFER_OWNERSHIP=true)
  * 6. Optionally transfers V2 Factory feeToSetter to Governor (if TRANSFER_OWNERSHIP=true)
  * 7. Optionally transfers ProxyAdmin ownership to Governor (if TRANSFER_OWNERSHIP=true)
@@ -159,7 +159,7 @@ async function main() {
   console.log("💰 Checking deployer balance...");
 
   // Estimate gas for both deployments + ownership transfers
-  // Governor: ~1.5M gas, FeeCollector: ~2.5M gas, transfers: ~0.2M each
+  // Governor: ~1.5M gas, FeeCollectorV2: ~2.5M gas, transfers: ~0.2M each
   const estimatedTotalGas = 5000000n; // 5M gas total estimate
   const maxFeePerGas = ethers.parseUnits(gasConfig.maxFeePerGas, "gwei");
   const estimatedCost = estimatedTotalGas * maxFeePerGas;
@@ -196,15 +196,15 @@ async function main() {
   // 5. DEPLOY JUICESWAP FEE COLLECTOR
   // ============================================
 
-  console.log("\n📝 Step 2: Deploying JuiceSwapFeeCollector...");
+  console.log("\n📝 Step 2: Deploying JuiceSwapFeeCollectorV2...");
 
-  const JuiceSwapFeeCollectorFactory = await ethers.getContractFactory("JuiceSwapFeeCollector");
+  const JuiceSwapFeeCollectorFactory = await ethers.getContractFactory("JuiceSwapFeeCollectorV2");
   const feeCollectorArgs = [
     JUSD_ADDRESS,
     JUICE_ADDRESS,
     SWAP_ROUTER_ADDRESS,
     FACTORY_ADDRESS,
-    governorAddress, // Governor owns FeeCollector
+    governorAddress, // Governor owns FeeCollectorV2
   ];
 
   const feeCollector = await JuiceSwapFeeCollectorFactory.deploy(
@@ -222,7 +222,7 @@ async function main() {
   await feeCollectorTx?.wait(confirmations);
 
   const feeCollectorAddress = await feeCollector.getAddress();
-  printDeploymentSummary("JuiceSwapFeeCollector", feeCollectorAddress, networkConfig, feeCollectorTx?.hash);
+  printDeploymentSummary("JuiceSwapFeeCollectorV2", feeCollectorAddress, networkConfig, feeCollectorTx?.hash);
 
   // ============================================
   // 6. TRANSFER FACTORY OWNERSHIP (if enabled)
@@ -399,7 +399,7 @@ async function main() {
     const finalTokenFactoryOwner = await tokenFactory.owner();
     console.log(`   TokenFactory Owner:   ${finalTokenFactoryOwner}`);
   }
-  console.log(`   FeeCollector Owner:   ${feeCollectorOwner}`);
+  console.log(`   FeeCollectorV2 Owner: ${feeCollectorOwner}`);
   console.log(`   Governor Address:     ${governorAddress}`);
 
   const ownershipComplete =
@@ -437,7 +437,7 @@ async function main() {
         deploymentTx: governorTx?.hash,
         constructorArgs: governorArgs,
       },
-      JuiceSwapFeeCollector: {
+      JuiceSwapFeeCollectorV2: {
         address: feeCollectorAddress,
         deploymentTx: feeCollectorTx?.hash,
         constructorArgs: feeCollectorArgs,
@@ -485,7 +485,7 @@ async function main() {
   const feeCollectorVerified = await verifyContract(
     feeCollectorAddress,
     feeCollectorArgs,
-    "contracts/governance/JuiceSwapFeeCollector.sol:JuiceSwapFeeCollector"
+    "contracts/governance/JuiceSwapFeeCollectorV2.sol:JuiceSwapFeeCollectorV2"
   );
 
   // ============================================
@@ -498,12 +498,12 @@ async function main() {
 
   console.log("📊 Deployed Contracts:");
   console.log(`   Governor:     ${governorAddress}`);
-  console.log(`   FeeCollector: ${feeCollectorAddress}`);
+  console.log(`   FeeCollectorV2: ${feeCollectorAddress}`);
   console.log("");
 
   console.log("📊 Verification Status:");
   console.log(`   Governor:     ${governorVerified ? "✅ Verified" : "❌ Not verified"}`);
-  console.log(`   FeeCollector: ${feeCollectorVerified ? "✅ Verified" : "❌ Not verified"}`);
+  console.log(`   FeeCollectorV2: ${feeCollectorVerified ? "✅ Verified" : "❌ Not verified"}`);
   console.log("");
 
   console.log("⚙️  Governance Parameters:");
@@ -513,8 +513,8 @@ async function main() {
   console.log("");
 
   console.log("🤖 Fee Collection:");
-  console.log(`   FeeCollector:  ${feeCollectorAddress}`);
-  console.log("   Authorized:    Not set (use setAuthorizedCollector proposal)");
+  console.log(`   FeeCollectorV2: ${feeCollectorAddress}`);
+  console.log("   Authorized:    Not set (use setCollector proposal)");
   console.log(`   SwapRouter:    ${SWAP_ROUTER_ADDRESS}`);
   console.log("   TWAP Period:   30 minutes");
   console.log("   Max Slippage:  2%");
@@ -523,12 +523,12 @@ async function main() {
   if (networkConfig.explorerUrl) {
     console.log("🔗 Explorer Links:");
     console.log(`   Governor:     ${networkConfig.explorerUrl}/address/${governorAddress}`);
-    console.log(`   FeeCollector: ${networkConfig.explorerUrl}/address/${feeCollectorAddress}`);
+    console.log(`   FeeCollectorV2: ${networkConfig.explorerUrl}/address/${feeCollectorAddress}`);
     console.log("");
   }
 
   console.log("📘 Next Steps:");
-  console.log("   1. Create proposal to set FeeCollector authorized address");
+  console.log("   1. Create proposal to set FeeCollectorV2 authorized address");
   console.log("   2. Setup keeper bot with private RPC");
   console.log("   3. Announce governance transition to community");
   if (!governorVerified || !feeCollectorVerified) {

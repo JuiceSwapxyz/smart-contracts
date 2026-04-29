@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0",
+  "network": {
+    "name": "Citrea Mainnet",
+    "chainId": 4114
+  },
+  "deployment": {
+    "deployedAt": "2026-04-28T14:26:23.536Z",
+    "deployedBy": "0xECc0b131D481dE8aB538D19F04dD4b253660D82B",
+    "blockNumber": 6642903
+  },
+  "contracts": {
+    "JuiceSwapFeeCollectorV2": {
+      "address": "0x6a9f5732FeAF6F9b78471EdB49ee577F6FCe3E7f",
+      "deploymentTx": "0x721b84b52ec1f591cb4ae18846867cebc2bf7d6902498ad3af4c791683cf0a11",
+      "constructorArgs": [
+        "0x0987D3720D38847ac6dBB9D025B9dE892a3CA35C",
+        "0x2A36f2b204B46Fd82653cd06d00c7fF757C99ae4",
+        "0x565eD3D57fe40f78A46f348C220121AE093c3cF8",
+        "0xd809b1285aDd8eeaF1B1566Bf31B2B4C4Bba8e82",
+        "0x51f3D5905C768CCA2D4904Ca7877614CeaD607ae"
+      ]
+    }
+  },
+  "metadata": {
+    "deployer": "JuiceSwapXyz/smart-contracts",
+    "script": "scripts/deploy-fee-collector-v2.ts",
+    "scriptVersion": "1.0.0"
+  }
+}

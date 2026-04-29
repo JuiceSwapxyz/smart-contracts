@@ -8,6 +8,9 @@ pragma solidity ^0.8.0;
 contract MockTarget {
     uint8 public feeProtocol0;
     uint8 public feeProtocol1;
+    address public token0;
+    address public token1;
+    uint24 public fee;
     uint24 public feeAmount;
     int24 public tickSpacing;
     address public owner;
@@ -19,6 +22,16 @@ contract MockTarget {
     event OwnerSet(address newOwner);
     event Upgraded(address implementation);
     event FunctionCalled(string name);
+    event ProtocolCollected(address recipient, uint128 amount0Requested, uint128 amount1Requested);
+
+    /**
+     * @notice Configure mock Uniswap V3 pool metadata
+     */
+    function setPoolInfo(address _token0, address _token1, uint24 _fee) external {
+        token0 = _token0;
+        token1 = _token1;
+        fee = _fee;
+    }
 
     /**
      * @notice Simulate setFeeProtocol from UniswapV3Pool
@@ -30,12 +43,24 @@ contract MockTarget {
     }
 
     /**
+     * @notice Simulate collectProtocol from UniswapV3Pool
+     */
+    function collectProtocol(
+        address recipient,
+        uint128 amount0Requested,
+        uint128 amount1Requested
+    ) external returns (uint128 amount0, uint128 amount1) {
+        emit ProtocolCollected(recipient, amount0Requested, amount1Requested);
+        return (0, 0);
+    }
+
+    /**
      * @notice Simulate enableFeeAmount from UniswapV3Factory
      */
-    function enableFeeAmount(uint24 fee, int24 _tickSpacing) external {
-        feeAmount = fee;
+    function enableFeeAmount(uint24 _feeAmount, int24 _tickSpacing) external {
+        feeAmount = _feeAmount;
         tickSpacing = _tickSpacing;
-        emit FeeAmountEnabled(fee, _tickSpacing);
+        emit FeeAmountEnabled(_feeAmount, _tickSpacing);
     }
 
     /**

@@ -82,6 +82,18 @@ Automated protocol fee collection contract for JuiceSwap, owned and controlled b
 - **SwapRouter**: Configurable via governance
 - **Keeper**: Configurable via governance
 
+**Pool prerequisite — observation cardinality:**
+
+Every pool used in a swap path must have observation cardinality at least
+`twapPeriod / expectedBlockTime + 1` (with the defaults: `1800 / 2 + 1 = 901`),
+and the buffer must be filled by prior swap activity. Otherwise
+`collectAndReinvestFees` reverts with `InsufficientCardinality`.
+
+Bumping is permissionless — call `pool.increaseObservationCardinalityNext(901)`
+directly on each pool. Once bumped, the buffer fills at one observation per
+block-with-a-swap, so on a busy pool it is queryable after roughly `twapPeriod`
+seconds; on a quiet pool it takes proportionally longer.
+
 ---
 
 #### Deploy Governance

@@ -54,7 +54,7 @@ const config: HardhatUserConfig = {
         network: "citrea",
         chainId: 4114,
         urls: {
-          apiURL: "https://citreascan.com/api",
+          apiURL: "https://api.citreascan.com/api",
           browserURL: "https://citreascan.com",
         },
       },
