@@ -99,7 +99,6 @@ contract ProtocolFeeKeeper is ReentrancyGuard {
     error InvalidAddress();
     error InvalidFeeValue();
     error Unauthorized();
-    error LengthMismatch();
 
     // ---------------------------------------------------------------------
     // Modifiers

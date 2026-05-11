@@ -409,6 +409,36 @@ describe("FeeRouter — adversarial", () => {
     });
   });
 
+  describe("Path-length guard", () => {
+    it("setConversionPath rejects a path with > MAX_PATH_HOPS hops", async () => {
+      const { router, wcbtc, jusd, governor } = await loadFixture(deployBaseline);
+      // Build a 6-hop path: token0 + (fee+token)*6. 6 > MAX_PATH_HOPS = 5.
+      const t = (await wcbtc.getAddress()).slice(2);
+      const j = (await jusd.getAddress()).slice(2);
+      const FEE = "0001f4"; // 500 fee tier
+      // 6 hops requires 6 fee/token pairs starting after token0.
+      // We use the same token repeatedly — only length matters.
+      let p = "0x" + t;
+      for (let i = 0; i < 5; i++) p += FEE + t;
+      p += FEE + j; // ends in JUSD, 6 hops total
+      await expect(router.connect(governor).setConversionPath(await wcbtc.getAddress(), p))
+        .to.be.revertedWithCustomError(router, "PathTooLong");
+    });
+
+    it("setConversionPath accepts exactly MAX_PATH_HOPS hops", async () => {
+      const { router, wcbtc, jusd, governor } = await loadFixture(deployBaseline);
+      const t = (await wcbtc.getAddress()).slice(2);
+      const j = (await jusd.getAddress()).slice(2);
+      const FEE = "0001f4";
+      let p = "0x" + t;
+      for (let i = 0; i < 4; i++) p += FEE + t; // 4 intermediate hops
+      p += FEE + j;                              // last hop ends in JUSD (= 5 total)
+      await router.connect(governor).setConversionPath(await wcbtc.getAddress(), p);
+      // accepted — no revert
+      expect(await router.conversionPath(await wcbtc.getAddress())).to.not.equal("0x");
+    });
+  });
+
   describe("Storage layout sanity (pack-check)", () => {
     it("feeBps and TWAP params share the same storage slot (single SLOAD)", async () => {
       const { router } = await loadFixture(deployBaseline);

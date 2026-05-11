@@ -86,6 +86,11 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
     uint16 public constant MAX_FEE_BPS = 500;
     uint16 private constant BPS_DENOMINATOR = 10000;
 
+    /// @notice Hard cap on the number of hops in a `conversionPath`.
+    ///         Defense-in-depth: governance cannot register an unbounded
+    ///         path that would exhaust gas on `convertAccumulated`.
+    uint256 public constant MAX_PATH_HOPS = 5;
+
     // ---------------------------------------------------------------------
     // Governable storage
     //
@@ -162,6 +167,7 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
     error UnwrapOnlyForWCBTC();
     error PathMustEndInJusd();
     error PathTooShort();
+    error PathTooLong();
     error PathNotConfigured(address token);
     error BelowMinConvert(address token, uint256 balance, uint256 minimum);
     error CannotConvertJusd();
@@ -286,6 +292,9 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
             return;
         }
         if (path.length < 43) revert PathTooShort();
+        // Path layout: 20 (token0) + (3 + 20) per hop. n hops = 20 + 23n bytes.
+        // Cap at MAX_PATH_HOPS to bound `_twapExpectedOut` gas use.
+        if ((path.length - 20) > MAX_PATH_HOPS * 23) revert PathTooLong();
         // First 20 bytes must equal `token`.
         address pathStart;
         address pathEnd;
