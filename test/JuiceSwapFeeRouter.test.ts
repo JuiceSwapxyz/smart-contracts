@@ -520,6 +520,21 @@ describe("JuiceSwapFeeRouter (strict: every swap pays JUSD-fee)", () => {
         .to.be.revertedWithCustomError(router, "PathTooShort");
     });
 
+    it("setConversionPath rejects bridgeable tokens (USDC.e / ctUSD)", async () => {
+      const { router, usdce, ctusd, jusd, governor } = await loadFixture(deployFixture);
+      const u = (await usdce.getAddress()).slice(2);
+      const c = (await ctusd.getAddress()).slice(2);
+      const j = (await jusd.getAddress()).slice(2);
+      const usdcePath = "0x" + u + "0001f4" + j;
+      const ctusdPath = "0x" + c + "0001f4" + j;
+      await expect(
+        router.connect(governor).setConversionPath(await usdce.getAddress(), usdcePath),
+      ).to.be.revertedWithCustomError(router, "TokenIsBridgeable");
+      await expect(
+        router.connect(governor).setConversionPath(await ctusd.getAddress(), ctusdPath),
+      ).to.be.revertedWithCustomError(router, "TokenIsBridgeable");
+    });
+
     it("setConversionPath(token=JUSD) reverts", async () => {
       const { router, jusd, governor } = await loadFixture(deployFixture);
       const p = encodeV3Path(await jusd.getAddress(), 3000, await jusd.getAddress());

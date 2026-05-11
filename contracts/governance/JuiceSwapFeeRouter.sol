@@ -161,6 +161,7 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
     error InsufficientCardinality(address pool);
     error PoolDoesNotExist();
     error InvalidTwapParams();
+    error TokenIsBridgeable(address token);
 
     // ---------------------------------------------------------------------
     // Construction
@@ -268,6 +269,10 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
      */
     function setConversionPath(address token, bytes calldata path) external onlyOwner {
         if (token == JUSD) revert CannotConvertJusd();
+        // Bridgeable tokens (USDC.e, ctUSD) convert via the immutable
+        // StablecoinBridge in the hot path. A conversionPath for them
+        // would be dead storage — refuse it so misconfiguration is loud.
+        if (isBridgeable(token)) revert TokenIsBridgeable(token);
         if (path.length == 0) {
             delete conversionPath[token];
             emit ConversionPathSet(token, path);
@@ -688,23 +693,25 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
         internal
         returns (uint256 jusdMinted)
     {
+        uint256 jusdBefore = IERC20(JUSD).balanceOf(FEE_COLLECTOR);
+
         if (token == JUSD) {
+            // Direct transfer. Balance-delta accounting mirrors the bridge
+            // path below — defends against a hypothetical future JUSD that
+            // could deviate from "1 unit transferred = 1 unit received".
             IERC20(JUSD).safeTransfer(FEE_COLLECTOR, feeAmount);
-            return feeAmount;
+        } else {
+            address bridge = _bridgeFor(token);
+            // _bridgeFor(JUSD) returns 0 — already handled above. For any
+            // other token, the function should never be reached with a
+            // non-zero bridge if isBridgeable(token) was checked upstream.
+            // Defensive: revert if somehow the bridge is missing.
+            if (bridge == address(0)) revert NoFeePath();
+            IFeeRouterStablecoinBridge b = IFeeRouterStablecoinBridge(bridge);
+            if (b.stopped()) revert BridgeStopped(bridge);
+            b.mintTo(FEE_COLLECTOR, feeAmount);
         }
 
-        address bridge = _bridgeFor(token);
-        // _bridgeFor(JUSD) returns 0 — already handled above. For any
-        // other token, the function should never be reached with a
-        // non-zero bridge if isBridgeable(token) was checked upstream.
-        // Defensive: revert if somehow the bridge is missing.
-        if (bridge == address(0)) revert NoFeePath();
-
-        IFeeRouterStablecoinBridge b = IFeeRouterStablecoinBridge(bridge);
-        if (b.stopped()) revert BridgeStopped(bridge);
-
-        uint256 jusdBefore = IERC20(JUSD).balanceOf(FEE_COLLECTOR);
-        b.mintTo(FEE_COLLECTOR, feeAmount);
         jusdMinted = IERC20(JUSD).balanceOf(FEE_COLLECTOR) - jusdBefore;
     }
 }
