@@ -36,11 +36,13 @@ The 1000 JUSD proposal fee is forwarded to `address(JUICE)` (Equity pot) — so 
 
 End-to-end verified in `test/Governance.feerouter.test.ts` (propose → time-travel 14d → execute). Direct attacker call always reverts with `OwnableUnauthorizedAccount`.
 
-## Fee path — three guaranteed properties
+## Fee path — guaranteed properties
 
 1. **Cap.** `MAX_FEE_BPS = 500` is a Solidity `constant`. `setFeeBps(bps)` reverts for `bps > 500`. Verified.
-2. **Recipient.** All fees enter the FeeCollector. `FEE_COLLECTOR` has no setter and is `immutable`. Verified by interface scan in `test/FeeRouter.adversarial.test.ts`.
-3. **Currency.** Whatever token a user trades, what reaches the collector is **always JUSD**.
+2. **Recipient.** All fees enter the FeeCollector. `FEE_COLLECTOR` has no setter and is `immutable`. Verified by interface scan.
+3. **Satsuma route is fixed.** `feeEnabled[ROUTE_SATSUMA] = true` is set at deployment and **cannot be toggled off**. `setRouteFeeEnabled(SATSUMA, …)` reverts `SatsumaRouteIsFixed`. JuiceSwap-V3 route fee starts off and is the only togglable lever.
+4. **100-JUSD conversion floor.** `MIN_CONVERT_JUSD = 100 ether` is a Solidity `constant`. `convertAccumulated(token)` reverts `BelowMinConvertJusd` if the TWAP-valued JUSD output of the accumulated balance is below 100 JUSD. Dust never converts.
+5. **Currency.** Whatever token a user trades, what reaches the collector is **always JUSD**.
    - tokenIn or tokenOut is bridgeable (JUSD/USDC.e/ctUSD): fee is converted via the immutable StablecoinBridge for that token, JUSD is minted directly to `FEE_COLLECTOR`.
    - tokenIn or tokenOut has a configured `conversionPath`: fee is parked in the token, and `convertAccumulated(token)` (permissionless) swaps it to JUSD via JuiceSwap V3 with a **TWAP-enforced** `amountOutMinimum`.
    - Neither: swap reverts with `NoFeePath`.
@@ -92,7 +94,7 @@ This is the canonical Frankencoin/Equity burn pattern and is consistent with `Ju
 A 100% compromised governor can do at most:
 
 - Move `feeBps` anywhere in `[0, 500]` — still under hard cap.
-- Toggle `feeEnabled[route]` — turn route fees off (cannot redirect them).
+- Toggle `feeEnabled[ROUTE_JUICESWAP_V3]` — Satsuma route is locked at deploy, JuiceSwap-V3 is the only togglable route.
 - Set `conversionPath[token]` to a worse pool — degrades conversion rate, but the path is still validated to end in JUSD, and the recipient is still the immutable `FEE_COLLECTOR`.
 - Set `minConvertAmount[token]` to MAX — strands tokens in the router but cannot extract them.
 - Set TWAP parameters within enforced floors.
