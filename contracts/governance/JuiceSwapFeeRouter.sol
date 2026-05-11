@@ -87,10 +87,28 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
     uint16 private constant BPS_DENOMINATOR = 10000;
 
     // ---------------------------------------------------------------------
-    // Governable
+    // Governable storage
+    //
+    // Packing: the four governance scalars below live in a single storage
+    // slot (2 + 4 + 4 + 2 = 12 bytes used, 20 bytes free). Declared in
+    // this order so Solidity packs them; do not reorder without measuring.
     // ---------------------------------------------------------------------
 
+    /// @notice Protocol fee in basis points. Default 25 (= 0.25%). Bounded
+    ///         to [0, MAX_FEE_BPS=500] by `setFeeBps`.
     uint16 public feeBps;
+
+    /// @notice TWAP observation period in seconds. Default 1800 (30 min).
+    uint32 public twapPeriod;
+
+    /// @notice Citrea block time in seconds. Default 2. Used to compute the
+    ///         minimum observation cardinality required for a TWAP read.
+    uint32 public expectedBlockTime;
+
+    /// @notice Maximum slippage allowed by `convertAccumulated`, in BPS of
+    ///         the TWAP-quoted JUSD output. Default 200 (= 2%).
+    uint16 public convertMaxSlippageBps;
+
     mapping(uint8 => bool) public feeEnabled;
 
     /// @notice Per-token V3 swap path used to convert accumulated non-stable
@@ -103,17 +121,6 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
     ///         reverts. DAO sets to roughly the $100-equivalent so dust
     ///         doesn't trigger uneconomic conversions. Default 0 = no gate.
     mapping(address => uint256) public minConvertAmount;
-
-    /// @notice TWAP observation period in seconds. Default 30 minutes.
-    uint32 public twapPeriod;
-
-    /// @notice Citrea block time in seconds. Default 2. Used to compute the
-    ///         minimum observation cardinality required for a TWAP read.
-    uint32 public expectedBlockTime;
-
-    /// @notice Maximum slippage allowed by `convertAccumulated`, in BPS of
-    ///         the TWAP-quoted JUSD output. Default 200 (= 2%).
-    uint16 public convertMaxSlippageBps;
 
     // ---------------------------------------------------------------------
     // Events
