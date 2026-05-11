@@ -91,6 +91,11 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
     ///         path that would exhaust gas on `convertAccumulated`.
     uint256 public constant MAX_PATH_HOPS = 5;
 
+    /// @notice Minimum TWAP-valued JUSD output below which
+    ///         `convertAccumulated` reverts. Hard floor so the router
+    ///         never converts dust. 100 JUSD = 100e18 (JUSD has 18 dec).
+    uint256 public constant MIN_CONVERT_JUSD = 100 ether;
+
     // ---------------------------------------------------------------------
     // Governable storage
     //
@@ -168,8 +173,10 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
     error PathMustEndInJusd();
     error PathTooShort();
     error PathTooLong();
+    error SatsumaRouteIsFixed();
     error PathNotConfigured(address token);
     error BelowMinConvert(address token, uint256 balance, uint256 minimum);
+    error BelowMinConvertJusd(uint256 expectedJusd, uint256 minimum);
     error CannotConvertJusd();
     error InsufficientCardinality(address pool);
     error PoolDoesNotExist();
@@ -209,9 +216,14 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
         // A3: JUSD must be 18-decimals (otherwise downstream accounting breaks).
         if (IERC20Metadata(a.jusd).decimals() != 18) revert BadDecimals();
 
-        // A2: bridges must be wired to their advertised source token.
+        // A2: bridges must be wired to their advertised source token AND
+        //     to the protocol JUSD. Both legs are checked so a misdeploy
+        //     cannot wire a bridge to a different stablecoin pretending
+        //     to be JUSD.
         if (IFeeRouterStablecoinBridge(a.usdceBridge).usd() != a.usdce) revert BridgeMismatch();
+        if (IFeeRouterStablecoinBridge(a.usdceBridge).JUSD() != a.jusd) revert BridgeMismatch();
         if (IFeeRouterStablecoinBridge(a.ctusdBridge).usd() != a.ctusd) revert BridgeMismatch();
+        if (IFeeRouterStablecoinBridge(a.ctusdBridge).JUSD() != a.jusd) revert BridgeMismatch();
 
         FEE_COLLECTOR = a.feeCollector;
         SATSUMA_ROUTER = a.satsumaRouter;
@@ -258,7 +270,14 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
         feeBps = newBps;
     }
 
+    /**
+     * @notice Toggle fee collection for a route. ROUTE_SATSUMA is fixed
+     *         at deploy and cannot be toggled — Satsuma-route trades
+     *         always pay the configured `feeBps`. ROUTE_JUICESWAP_V3
+     *         starts disabled and can be enabled by the DAO.
+     */
     function setRouteFeeEnabled(uint8 route, bool enabled) external onlyOwner {
+        if (route == ROUTE_SATSUMA) revert SatsumaRouteIsFixed();
         feeEnabled[route] = enabled;
         emit RouteFeeToggled(route, enabled);
     }
@@ -381,6 +400,14 @@ contract JuiceSwapFeeRouter is Ownable, ReentrancyGuard {
         // below that floor without manipulating the TWAP across the full
         // observation window — which costs vastly more than the fee.
         uint256 expectedJusd = _twapExpectedOut(path, balance);
+
+        // Hard floor: do not bother converting if the TWAP value is
+        // below 100 JUSD. Matches the protocol-level "convert at 100 JUSD
+        // worth" rule and stops dust-conversions from wasting gas.
+        if (expectedJusd < MIN_CONVERT_JUSD) {
+            revert BelowMinConvertJusd(expectedJusd, MIN_CONVERT_JUSD);
+        }
+
         uint256 amountOutMinimum =
             (expectedJusd * (BPS_DENOMINATOR - convertMaxSlippageBps)) / BPS_DENOMINATOR;
 

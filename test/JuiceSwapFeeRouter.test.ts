@@ -122,6 +122,41 @@ describe("JuiceSwapFeeRouter (strict: every swap pays JUSD-fee)", () => {
       })).to.be.revertedWithCustomError(FR, "BadDecimals");
     });
 
+    it("rejects bridge wired to wrong JUSD (M-1)", async () => {
+      const [deployer, gov] = await ethers.getSigners();
+      const ERC20 = await ethers.getContractFactory("MockERC20");
+      const jusd = await ERC20.deploy("J", "J", 18);
+      const fakeJusd = await ERC20.deploy("FJ", "FJ", 18);
+      const usdce = await ERC20.deploy("U", "U", 6);
+      const ctusd = await ERC20.deploy("C", "C", 6);
+      const Bridge = await ethers.getContractFactory(BRIDGE);
+      // Bridge wired to fakeJusd, not the real JUSD passed below.
+      const ub = await Bridge.deploy(await usdce.getAddress(), await fakeJusd.getAddress(), 1);
+      const cb = await Bridge.deploy(await ctusd.getAddress(), await fakeJusd.getAddress(), 1);
+      const Algebra = await ethers.getContractFactory("MockAlgebraSwapRouter");
+      const a = await Algebra.deploy();
+      const V3 = await ethers.getContractFactory("MockV3SwapRouter");
+      const v = await V3.deploy();
+      const W = await ethers.getContractFactory("MockWETH");
+      const w = await W.deploy("W", "W");
+      const F = await ethers.getContractFactory("MockUniV3Factory");
+      const f = await F.deploy(await deployer.getAddress());
+      const FR = await ethers.getContractFactory("JuiceSwapFeeRouter");
+      await expect(FR.deploy({
+        feeCollector: await deployer.getAddress(),
+        satsumaRouter: await a.getAddress(),
+        juiceswapRouter: await v.getAddress(),
+        juiceswapFactory: await f.getAddress(),
+        governor: await gov.getAddress(),
+        jusd: await jusd.getAddress(),
+        usdce: await usdce.getAddress(),
+        usdceBridge: await ub.getAddress(),
+        ctusd: await ctusd.getAddress(),
+        ctusdBridge: await cb.getAddress(),
+        wcbtc: await w.getAddress(),
+      })).to.be.revertedWithCustomError(FR, "BridgeMismatch");
+    });
+
     it("rejects bridge that points at the wrong source token (A2)", async () => {
       const [deployer, gov] = await ethers.getSigners();
       const ERC20 = await ethers.getContractFactory("MockERC20");
@@ -345,6 +380,16 @@ describe("JuiceSwapFeeRouter (strict: every swap pays JUSD-fee)", () => {
       const { router, attacker } = await loadFixture(deployFixture);
       await expect(router.connect(attacker).setFeeBps(100))
         .to.be.revertedWithCustomError(router, "OwnableUnauthorizedAccount");
+    });
+
+    it("Satsuma route is FIXED — setRouteFeeEnabled(SATSUMA, …) reverts", async () => {
+      const { router, governor } = await loadFixture(deployFixture);
+      await expect(router.connect(governor).setRouteFeeEnabled(0, false))
+        .to.be.revertedWithCustomError(router, "SatsumaRouteIsFixed");
+      await expect(router.connect(governor).setRouteFeeEnabled(0, true))
+        .to.be.revertedWithCustomError(router, "SatsumaRouteIsFixed");
+      // ROUTE_SATSUMA always returns true
+      expect(await router.feeEnabled(0)).to.equal(true);
     });
 
     it("JuiceSwap-V3 route fee starts OFF, DAO can flip", async () => {
@@ -593,22 +638,21 @@ describe("JuiceSwapFeeRouter (strict: every swap pays JUSD-fee)", () => {
       );
     });
 
-    it("convertAccumulated: WCBTC → JUSD via TWAP-protected path", async () => {
+    it("convertAccumulated: WCBTC → JUSD via TWAP-protected path (>= 100 JUSD)", async () => {
       const { router, wcbtc, jusd, user, governor, feeCollector, v3Factory } =
         await loadFixture(deployFixture);
       const ERC20 = await ethers.getContractFactory("MockERC20");
       const juice = await ERC20.deploy("JUICE", "JUICE", 18);
-      await juice.mint(await router.JUICESWAP_ROUTER(), ethers.parseEther("1000"));
+      await juice.mint(await router.JUICESWAP_ROUTER(), ethers.parseEther("100000"));
       await jusd.mint(await router.JUICESWAP_ROUTER(), ethers.parseEther("1000000"));
 
-      // Set up the WCBTC/JUSD V3 pool mock with tick=0 (1:1) + enough cardinality.
+      // WCBTC/JUSD pool mocked at tick=0 (1:1) + enough cardinality.
       const Pool = await ethers.getContractFactory("MockUniV3Pool");
       const pool = await Pool.deploy(
         await v3Factory.getAddress(),
         await wcbtc.getAddress(),
         await jusd.getAddress(),
       );
-      // tick 0 ≈ 1:1 quote regardless of decimals via getQuoteAtTick.
       await pool.setMockTwap(0, 1000);
       await v3Factory.setPool(
         await wcbtc.getAddress(),
@@ -621,7 +665,11 @@ describe("JuiceSwapFeeRouter (strict: every swap pays JUSD-fee)", () => {
       const p = encodeV3Path(await wcbtc.getAddress(), 3000, await jusd.getAddress());
       await router.connect(governor).setConversionPath(await wcbtc.getAddress(), p);
 
-      const amountIn = ethers.parseEther("0.1");
+      // Need to accumulate enough fee to exceed 100 JUSD TWAP value.
+      // At 1:1 quote and 0.25% fee, we need amountIn ≥ 40,000 WCBTC.
+      // We mint the user a big WCBTC bag and accumulate via repeated trades.
+      await wcbtc.connect(user).deposit({ value: ethers.parseEther("50") });
+      const amountIn = ethers.parseEther("50");
       await wcbtc.connect(user).approve(await router.getAddress(), amountIn);
       await router.connect(user).swapExactInputSingleJuiceSwap(
         await wcbtc.getAddress(), await juice.getAddress(),
@@ -630,15 +678,42 @@ describe("JuiceSwapFeeRouter (strict: every swap pays JUSD-fee)", () => {
         false,
       );
 
-      const expectedFee = (amountIn * 25n) / 10000n;
-      const before = await jusd.balanceOf(await feeCollector.getAddress());
+      const expectedFee = (amountIn * 25n) / 10000n; // 0.125 WCBTC (= 0.125e18 raw)
+      // TWAP-mock is 1:1 → expectedJusd = balance = 0.125e18 < 100e18 → still below threshold.
+      // Bump balance directly to demonstrate threshold-passing case.
+      await wcbtc.connect(user).deposit({ value: ethers.parseEther("100") });
+      await wcbtc.connect(user).transfer(await router.getAddress(), ethers.parseEther("100"));
 
+      const before = await jusd.balanceOf(await feeCollector.getAddress());
       await router.connect(user).convertAccumulated(await wcbtc.getAddress());
 
-      // 1:1 mock + tick=0 ⇒ TWAP-expected = balance, actual = balance.
-      expect(await jusd.balanceOf(await feeCollector.getAddress()) - before)
-        .to.equal(expectedFee);
-      expect(await wcbtc.balanceOf(await router.getAddress())).to.equal(0);
+      const routerBalAfter = await wcbtc.balanceOf(await router.getAddress());
+      expect(routerBalAfter).to.equal(0);
+      const collectorGain = await jusd.balanceOf(await feeCollector.getAddress()) - before;
+      // 1:1 mock; collector got >= 100 JUSD.
+      expect(collectorGain).to.be.gte(ethers.parseEther("100"));
+    });
+
+    it("convertAccumulated reverts when TWAP value below 100 JUSD floor", async () => {
+      const { router, wcbtc, jusd, user, governor, v3Factory } =
+        await loadFixture(deployFixture);
+      const Pool = await ethers.getContractFactory("MockUniV3Pool");
+      const pool = await Pool.deploy(
+        await v3Factory.getAddress(),
+        await wcbtc.getAddress(),
+        await jusd.getAddress(),
+      );
+      await pool.setMockTwap(0, 1000);
+      await v3Factory.setPool(
+        await wcbtc.getAddress(), await jusd.getAddress(), 3000, await pool.getAddress(),
+      );
+      const p = encodeV3Path(await wcbtc.getAddress(), 3000, await jusd.getAddress());
+      await router.connect(governor).setConversionPath(await wcbtc.getAddress(), p);
+
+      // Park a small amount in the router (< 100 JUSD TWAP value).
+      await wcbtc.connect(user).transfer(await router.getAddress(), ethers.parseEther("1"));
+      await expect(router.connect(user).convertAccumulated(await wcbtc.getAddress()))
+        .to.be.revertedWithCustomError(router, "BelowMinConvertJusd");
     });
 
     it("convertAccumulated reverts when pool cardinality is insufficient", async () => {
