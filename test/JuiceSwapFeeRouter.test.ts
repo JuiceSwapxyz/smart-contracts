@@ -664,6 +664,83 @@ describe("JuiceSwapFeeRouter (strict: every swap pays JUSD-fee)", () => {
         .to.be.revertedWithCustomError(router, "InsufficientCardinality");
     });
 
+    it("Satsuma: output-side accumulation (input bridgeable=no, output=non-bridgeable with path)", async () => {
+      // Input WCBTC (no bridge, no path) → Output JUICE (no bridge, but path set).
+      // Expected: fee taken on output-side, JUICE balance accumulates in router.
+      const { router, wcbtc, jusd, user, governor, feeCollector } =
+        await loadFixture(deployFixture);
+      const ERC20 = await ethers.getContractFactory("MockERC20");
+      const juice = await ERC20.deploy("J", "J", 18);
+      await juice.mint(await router.SATSUMA_ROUTER(), ethers.parseEther("1000"));
+      const p = encodeV3Path(await juice.getAddress(), 3000, await jusd.getAddress());
+      await router.connect(governor).setConversionPath(await juice.getAddress(), p);
+
+      const amountIn = ethers.parseEther("0.1");
+      await wcbtc.connect(user).approve(await router.getAddress(), amountIn);
+      const before = await juice.balanceOf(await router.getAddress());
+      const tx = await router.connect(user).swapExactInputSingleSatsuma(
+        await wcbtc.getAddress(), await juice.getAddress(),
+        ethers.ZeroAddress, amountIn, 0, 0,
+        Math.floor(Date.now() / 1000) + 600,
+        false,
+      );
+      const fee = (amountIn * 25n) / 10000n;
+      expect(await juice.balanceOf(await router.getAddress()) - before).to.equal(fee);
+      expect(await jusd.balanceOf(await feeCollector.getAddress())).to.equal(0);
+      await expect(tx).to.emit(router, "FeeAccumulated").withArgs(
+        await juice.getAddress(), fee,
+      );
+    });
+
+    it("Satsuma: input-side accumulation (tokenIn=WCBTC with path)", async () => {
+      const { router, wcbtc, ctusd, jusd, user, governor, feeCollector } =
+        await loadFixture(deployFixture);
+      const p = encodeV3Path(await wcbtc.getAddress(), 3000, await jusd.getAddress());
+      await router.connect(governor).setConversionPath(await wcbtc.getAddress(), p);
+
+      const amountIn = ethers.parseEther("0.1");
+      await wcbtc.connect(user).approve(await router.getAddress(), amountIn);
+      const before = await wcbtc.balanceOf(await router.getAddress());
+      const tx = await router.connect(user).swapExactInputSingleSatsuma(
+        await wcbtc.getAddress(), await ctusd.getAddress(),
+        ethers.ZeroAddress, amountIn, 0, 0,
+        Math.floor(Date.now() / 1000) + 600,
+        false,
+      );
+      const fee = (amountIn * 25n) / 10000n;
+      expect(await wcbtc.balanceOf(await router.getAddress()) - before).to.equal(fee);
+      expect(await jusd.balanceOf(await feeCollector.getAddress())).to.equal(0);
+      await expect(tx).to.emit(router, "FeeAccumulated").withArgs(
+        await wcbtc.getAddress(), fee,
+      );
+    });
+
+    it("JuiceSwap: output-side accumulation (output=non-bridgeable with path)", async () => {
+      const { router, wcbtc, jusd, user, governor, feeCollector } =
+        await loadFixture(deployFixture);
+      await router.connect(governor).setRouteFeeEnabled(1, true);
+      const ERC20 = await ethers.getContractFactory("MockERC20");
+      const juice = await ERC20.deploy("J", "J", 18);
+      await juice.mint(await router.JUICESWAP_ROUTER(), ethers.parseEther("1000"));
+      const p = encodeV3Path(await juice.getAddress(), 3000, await jusd.getAddress());
+      await router.connect(governor).setConversionPath(await juice.getAddress(), p);
+
+      const amountIn = ethers.parseEther("0.1");
+      await wcbtc.connect(user).approve(await router.getAddress(), amountIn);
+      const tx = await router.connect(user).swapExactInputSingleJuiceSwap(
+        await wcbtc.getAddress(), await juice.getAddress(),
+        3000, amountIn, 0, 0,
+        Math.floor(Date.now() / 1000) + 600,
+        false,
+      );
+      const fee = (amountIn * 25n) / 10000n;
+      expect(await juice.balanceOf(await router.getAddress())).to.equal(fee);
+      expect(await jusd.balanceOf(await feeCollector.getAddress())).to.equal(0);
+      await expect(tx).to.emit(router, "FeeAccumulated").withArgs(
+        await juice.getAddress(), fee,
+      );
+    });
+
     it("convertAccumulated reverts when pool doesn't exist", async () => {
       const { router, wcbtc, jusd, user, governor } = await loadFixture(deployFixture);
       const p = encodeV3Path(await wcbtc.getAddress(), 3000, await jusd.getAddress());
@@ -671,6 +748,14 @@ describe("JuiceSwapFeeRouter (strict: every swap pays JUSD-fee)", () => {
       await wcbtc.connect(user).transfer(await router.getAddress(), ethers.parseEther("0.01"));
       await expect(router.convertAccumulated(await wcbtc.getAddress()))
         .to.be.revertedWithCustomError(router, "PoolDoesNotExist");
+    });
+
+    it("setTwapParams happy path updates all three params", async () => {
+      const { router, governor } = await loadFixture(deployFixture);
+      await router.connect(governor).setTwapParams(3600, 12, 500);
+      expect(await router.twapPeriod()).to.equal(3600);
+      expect(await router.expectedBlockTime()).to.equal(12);
+      expect(await router.convertMaxSlippageBps()).to.equal(500);
     });
 
     it("setTwapParams rejects invalid values", async () => {

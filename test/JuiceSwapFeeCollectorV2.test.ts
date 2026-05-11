@@ -100,6 +100,22 @@ describe("JuiceSwapFeeCollectorV2 (strict)", () => {
       expect(r[0]).to.equal(false);
     });
 
+    it("tryFlush above threshold: flushes step-multiple and returns (true, amount)", async () => {
+      const { collector, jusd, juice, anyone } = await loadFixture(deployFixture);
+      await jusd.mint(await collector.getAddress(), ethers.parseEther("350"));
+      const result = await collector.connect(anyone).tryFlush.staticCall();
+      expect(result[0]).to.equal(true);
+      expect(result[1]).to.equal(ethers.parseEther("300"));
+      // Actually execute and verify state.
+      await collector.connect(anyone).tryFlush();
+      expect(await jusd.balanceOf(await juice.getAddress())).to.equal(
+        ethers.parseEther("300"),
+      );
+      expect(await jusd.balanceOf(await collector.getAddress())).to.equal(
+        ethers.parseEther("50"),
+      );
+    });
+
     it("flush is permissionless", async () => {
       const { collector, jusd, juice, user } = await loadFixture(deployFixture);
       await jusd.mint(await collector.getAddress(), ethers.parseEther("200"));
