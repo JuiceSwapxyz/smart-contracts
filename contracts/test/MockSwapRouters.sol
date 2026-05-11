@@ -23,6 +23,7 @@ contract MockFeeRouterBridge {
     }
 
     function usd() external view returns (address) { return source; }
+    function JUSD() external view returns (address) { return JUSDtoken; }
 
     function setStopped(bool v) external { stopped = v; }
 

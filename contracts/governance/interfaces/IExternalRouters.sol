@@ -7,6 +7,7 @@ interface IFeeRouterStablecoinBridge {
     function mintTo(address target, uint256 amount) external;
     function stopped() external view returns (bool);
     function usd() external view returns (address);
+    function JUSD() external view returns (address);
 }
 
 /// @notice Wrapped cBTC interface (WETH9-style).

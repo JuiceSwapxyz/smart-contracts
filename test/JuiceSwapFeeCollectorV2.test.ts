@@ -22,6 +22,22 @@ describe("JuiceSwapFeeCollectorV2 (strict)", () => {
     return { collector, jusd, juice, governor, user, anyone, deployer };
   }
 
+  it("rejects misdeploy where Equity.JUSD() != _jusd (M-2)", async () => {
+    const [, governor] = await ethers.getSigners();
+    const ERC20 = await ethers.getContractFactory("MockERC20");
+    const jusd = await ERC20.deploy("JUSD", "JUSD", 18);
+    const otherJusd = await ERC20.deploy("XJUSD", "XJUSD", 18);
+    const Equity = await ethers.getContractFactory("MockEquity");
+    // Equity wired to otherJusd, not jusd.
+    const juice = await Equity.deploy("J", "J", await otherJusd.getAddress());
+    const Collector = await ethers.getContractFactory("JuiceSwapFeeCollectorV2");
+    await expect(Collector.deploy(
+      await jusd.getAddress(), // wrong — Equity references otherJusd
+      await juice.getAddress(),
+      await governor.getAddress(),
+    )).to.be.revertedWithCustomError(Collector, "JusdEquityMismatch");
+  });
+
   it("sets immutables and defaults at construction", async () => {
     const { collector, jusd, juice, governor } = await loadFixture(deployFixture);
     expect(await collector.JUSD()).to.equal(await jusd.getAddress());

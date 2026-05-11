@@ -40,6 +40,12 @@ interface IEquity {
     function delegates(address owner) external view returns (address);
 
     /**
+     * @notice The JUSD token this Equity is bound to. Used by
+     *         FeeCollectorV2 to validate JUSD-Equity wiring at deploy.
+     */
+    function JUSD() external view returns (address);
+
+    /**
      * @notice Burn `shares` of JUICE held by msg.sender and send the
      *         redemption proceeds (in JUSD) to `target`. Used by
      *         FeeCollector to do a real burn: by passing

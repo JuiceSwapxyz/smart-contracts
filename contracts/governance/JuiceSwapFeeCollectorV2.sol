@@ -74,6 +74,7 @@ contract JuiceSwapFeeCollectorV2 is Ownable, ReentrancyGuard {
     error InvalidStep();
     error BelowThreshold();
     error NothingToBurn();
+    error JusdEquityMismatch();
 
     // ---------------------------------------------------------------------
     // Construction
@@ -82,6 +83,13 @@ contract JuiceSwapFeeCollectorV2 is Ownable, ReentrancyGuard {
     constructor(address _jusd, address _juice, address _owner) Ownable(_owner) {
         if (_jusd == address(0)) revert InvalidAddress();
         if (_juice == address(0)) revert InvalidAddress();
+
+        // The Equity contract must reference exactly this JUSD. Without
+        // this check a misdeploy could pair a JUSD token with an Equity
+        // bound to a different stablecoin, leaving `burnJuiceShares`
+        // silently broken (redeem proceeds would route through a JUSD
+        // the Equity doesn't track).
+        if (IEquity(_juice).JUSD() != _jusd) revert JusdEquityMismatch();
 
         JUSD = IERC20(_jusd);
         JUICE = IEquity(_juice);
