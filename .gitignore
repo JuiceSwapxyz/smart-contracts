@@ -33,3 +33,7 @@ gasReporterOutput.json
 # Only production deployments (testnet/mainnet) should be committed after review
 deployments/localhost/
 deployments/hardhat/
+
+# contract security tooling generated output
+crytic-export/
+echidna-corpus/
