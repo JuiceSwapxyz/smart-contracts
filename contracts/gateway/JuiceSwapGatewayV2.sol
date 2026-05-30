@@ -2,6 +2,8 @@
 pragma solidity ^0.8.20;
 
 import {IJuiceSwapGateway} from "./interfaces/IJuiceSwapGateway.sol";
+import {IStablecoinBridge} from "./interfaces/IStablecoinBridge.sol";
+import {IJuiceDollar} from "@juicedollar/jusd/contracts/interface/IJuiceDollar.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -79,6 +81,14 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
 
     uint8 public immutable JUSD_DECIMALS;
 
+    struct BridgeConfig {
+        IStablecoinBridge bridge;
+        uint8 decimals;
+    }
+
+    mapping(address => BridgeConfig) private _bridgeConfigs;
+    address[] private _bridgedTokens;
+
     address private constant NATIVE_TOKEN = address(0);
     uint24 public constant DEFAULT_FEE = 3000;
     uint256 public constant PROTOCOL_FEE_BPS = 25;
@@ -87,6 +97,7 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
     error InvalidToken();
     error InvalidAmount();
     error InsufficientOutput();
+    error TransferFailed();
     error DeadlineExpired();
     error DirectTransferNotAccepted();
     error InvalidFee(uint24 fee);
@@ -94,6 +105,11 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
     error InsufficientTradeAmount(uint256 grossAmount, uint256 feeAmount);
     error BalanceDeltaMismatch(address token, uint256 expectedDelta, uint256 actualDelta);
     error UnexpectedBalance(address token, uint256 expected, uint256 actual);
+    error BridgedTokenAlreadyExists(address token);
+    error BridgedTokenNotFound(address token);
+    error InvalidBridgeConfig();
+    error BridgeNotApprovedMinter(address bridge);
+    error BridgeStopped(address bridge);
 
     event ProtocolFeeToEquity(address indexed payer, uint256 jusdAmount);
 
@@ -132,10 +148,14 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         address to,
         uint256 deadline
     ) external payable nonReentrant returns (uint256 amountOut) {
-        if (msg.value > 0) revert DirectTransferNotAccepted();
         if (block.timestamp > deadline) revert DeadlineExpired();
         if (amountIn < 1) revert InvalidAmount();
         if (to == address(0)) revert InvalidToken();
+        if (tokenIn == NATIVE_TOKEN) {
+            if (msg.value != amountIn) revert InvalidAmount();
+        } else if (msg.value > 0) {
+            revert DirectTransferNotAccepted();
+        }
 
         if (_isStageTwoDirectConversion(tokenIn, tokenOut)) {
             return _swapStageTwoDirect(tokenIn, tokenOut, amountIn, minAmountOut, to);
@@ -219,11 +239,21 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         emit ProtocolFeeToEquity(msg.sender, jusdAmount);
     }
 
+    function _isRegisteredBridgeToken(address token) private view returns (bool) {
+        return address(_bridgeConfigs[token].bridge) != address(0);
+    }
+
     function _isStageTwoAsset(address token) private view returns (bool) {
-        return token == address(JUSD) || token == address(SV_JUSD) || token == address(JUICE);
+        return
+            token == address(JUSD) ||
+            token == address(SV_JUSD) ||
+            token == address(JUICE) ||
+            _isRegisteredBridgeToken(token);
     }
 
     function _isStageTwoDirectConversion(address tokenIn, address tokenOut) private view returns (bool) {
+        if (tokenIn == NATIVE_TOKEN && tokenOut == address(WCBTC)) return true;
+        if (tokenIn == address(WCBTC) && tokenOut == NATIVE_TOKEN) return true;
         return tokenIn != tokenOut && _isStageTwoAsset(tokenIn) && _isStageTwoAsset(tokenOut);
     }
 
@@ -234,6 +264,10 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         uint256 minAmountOut,
         address to
     ) private returns (uint256 amountOut) {
+        if (tokenIn == NATIVE_TOKEN || tokenOut == NATIVE_TOKEN) {
+            return _swapNativeCbtc(tokenIn, tokenOut, amountIn, minAmountOut, to);
+        }
+
         uint256 expectedJusdBalance = JUSD.balanceOf(address(this));
         uint256 expectedSvJusdBalance = IERC20(address(SV_JUSD)).balanceOf(address(this));
         uint256 expectedJuiceBalance = JUICE.balanceOf(address(this));
@@ -255,6 +289,55 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         emit SwapExecuted(msg.sender, tokenIn, tokenOut, amountIn, amountOut);
         return amountOut;
     }
+
+    // WHY: Native unwrap is caller-funded, entrypoint-protected by nonReentrant, and residual balances are asserted.
+    // slither-disable-start reentrancy-balance
+    function _swapNativeCbtc(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint256 minAmountOut,
+        address to
+    ) private returns (uint256 amountOut) {
+        if (tokenIn == NATIVE_TOKEN && tokenOut == address(WCBTC)) {
+            uint256 expectedNativeBalance = address(this).balance - amountIn;
+            uint256 expectedWcbtcBalance = WCBTC.balanceOf(address(this));
+
+            WCBTC.deposit{value: amountIn}();
+            amountOut = _transferStageTwoOutput(IERC20(address(WCBTC)), address(WCBTC), amountIn, to);
+
+            _assertTokenBalance(IERC20(address(WCBTC)), address(WCBTC), address(this), expectedWcbtcBalance);
+            _assertNativeBalance(expectedNativeBalance);
+        } else if (tokenIn == address(WCBTC) && tokenOut == NATIVE_TOKEN) {
+            uint256 expectedWcbtcBalance = WCBTC.balanceOf(address(this));
+            uint256 expectedNativeBalance = address(this).balance;
+
+            IERC20 wcbtc = IERC20(address(WCBTC));
+            wcbtc.safeTransferFrom(msg.sender, address(this), amountIn);
+            uint256 receivedWcbtc = _checkedBalanceDelta(
+                wcbtc,
+                address(WCBTC),
+                address(this),
+                expectedWcbtcBalance,
+                amountIn
+            );
+
+            WCBTC.withdraw(receivedWcbtc);
+            _transferNative(to, receivedWcbtc);
+            amountOut = receivedWcbtc;
+
+            _assertTokenBalance(wcbtc, address(WCBTC), address(this), expectedWcbtcBalance);
+            _assertNativeBalance(expectedNativeBalance);
+        } else {
+            revert NotImplemented();
+        }
+
+        if (amountOut < 1 || amountOut < minAmountOut) revert InsufficientOutput();
+
+        emit SwapExecuted(msg.sender, tokenIn, tokenOut, amountIn, amountOut);
+        return amountOut;
+    }
+    // slither-disable-end reentrancy-balance
 
     function _collectStageTwoInput(address tokenIn, uint256 amountIn) private returns (uint256 grossJusd) {
         if (tokenIn == address(JUSD)) {
@@ -280,9 +363,32 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
             return _checkedBalanceDelta(JUSD, address(JUSD), address(this), jusdRedeemBalanceBefore, redeemedAssets);
         }
 
-        uint256 jusdProceedsBalanceBefore = JUSD.balanceOf(address(this));
-        uint256 proceeds = JUICE.redeemFrom(msg.sender, address(this), amountIn, 0);
-        return _checkedBalanceDelta(JUSD, address(JUSD), address(this), jusdProceedsBalanceBefore, proceeds);
+        BridgeConfig storage config = _bridgeConfigs[tokenIn];
+        if (address(config.bridge) != address(0)) {
+            IERC20 bridgedToken = IERC20(tokenIn);
+            uint256 bridgedBalanceBefore = bridgedToken.balanceOf(address(this));
+            bridgedToken.safeTransferFrom(msg.sender, address(this), amountIn);
+            uint256 receivedBridged = _checkedBalanceDelta(
+                bridgedToken,
+                tokenIn,
+                address(this),
+                bridgedBalanceBefore,
+                amountIn
+            );
+
+            uint256 jusdMintBalanceBefore = JUSD.balanceOf(address(this));
+            config.bridge.mint(receivedBridged);
+            uint256 mintedJusd = _bridgedToJusdAmount(receivedBridged, config.decimals);
+            return _checkedBalanceDelta(JUSD, address(JUSD), address(this), jusdMintBalanceBefore, mintedJusd);
+        }
+
+        if (tokenIn == address(JUICE)) {
+            uint256 jusdProceedsBalanceBefore = JUSD.balanceOf(address(this));
+            uint256 proceeds = JUICE.redeemFrom(msg.sender, address(this), amountIn, 0);
+            return _checkedBalanceDelta(JUSD, address(JUSD), address(this), jusdProceedsBalanceBefore, proceeds);
+        }
+
+        revert InvalidToken();
     }
 
     function _convertStageTwoOutput(address tokenOut, uint256 netJusd, address to) private returns (uint256 amountOut) {
@@ -297,16 +403,28 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
             return _checkedBalanceDelta(svJusd, address(SV_JUSD), to, recipientBalanceBefore, svJusdShares);
         }
 
-        uint256 juiceBalanceBefore = JUICE.balanceOf(address(this));
-        uint256 juiceShares = JUICE.invest(netJusd, 0);
-        uint256 receivedShares = _checkedBalanceDelta(
-            IERC20(address(JUICE)),
-            address(JUICE),
-            address(this),
-            juiceBalanceBefore,
-            juiceShares
-        );
-        return _transferStageTwoOutput(IERC20(address(JUICE)), address(JUICE), receivedShares, to);
+        BridgeConfig storage config = _bridgeConfigs[tokenOut];
+        if (address(config.bridge) != address(0)) {
+            uint256 recipientBalanceBefore = IERC20(tokenOut).balanceOf(to);
+            uint256 bridgedAmount = _jusdToBridgedAmount(netJusd, config.decimals);
+            config.bridge.burnAndSend(to, netJusd);
+            return _checkedBalanceDelta(IERC20(tokenOut), tokenOut, to, recipientBalanceBefore, bridgedAmount);
+        }
+
+        if (tokenOut == address(JUICE)) {
+            uint256 juiceBalanceBefore = JUICE.balanceOf(address(this));
+            uint256 juiceShares = JUICE.invest(netJusd, 0);
+            uint256 receivedShares = _checkedBalanceDelta(
+                IERC20(address(JUICE)),
+                address(JUICE),
+                address(this),
+                juiceBalanceBefore,
+                juiceShares
+            );
+            return _transferStageTwoOutput(IERC20(address(JUICE)), address(JUICE), receivedShares, to);
+        }
+
+        revert InvalidToken();
     }
 
     function _transferStageTwoOutput(
@@ -339,20 +457,37 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         uint256 expectedSvJusdBalance,
         uint256 expectedJuiceBalance
     ) private view {
-        uint256 actualJusdBalance = JUSD.balanceOf(address(this));
-        if (_amountsDiffer(actualJusdBalance, expectedJusdBalance)) {
-            revert UnexpectedBalance(address(JUSD), expectedJusdBalance, actualJusdBalance);
-        }
+        _assertTokenBalance(JUSD, address(JUSD), address(this), expectedJusdBalance);
 
-        uint256 actualSvJusdBalance = IERC20(address(SV_JUSD)).balanceOf(address(this));
-        if (_amountsDiffer(actualSvJusdBalance, expectedSvJusdBalance)) {
-            revert UnexpectedBalance(address(SV_JUSD), expectedSvJusdBalance, actualSvJusdBalance);
-        }
+        _assertTokenBalance(IERC20(address(SV_JUSD)), address(SV_JUSD), address(this), expectedSvJusdBalance);
 
-        uint256 actualJuiceBalance = JUICE.balanceOf(address(this));
-        if (_amountsDiffer(actualJuiceBalance, expectedJuiceBalance)) {
-            revert UnexpectedBalance(address(JUICE), expectedJuiceBalance, actualJuiceBalance);
+        _assertTokenBalance(JUICE, address(JUICE), address(this), expectedJuiceBalance);
+    }
+
+    function _assertTokenBalance(
+        IERC20 token,
+        address tokenAddress,
+        address account,
+        uint256 expectedBalance
+    ) private view {
+        uint256 actualBalance = token.balanceOf(account);
+        if (_amountsDiffer(actualBalance, expectedBalance)) {
+            revert UnexpectedBalance(tokenAddress, expectedBalance, actualBalance);
         }
+    }
+
+    function _assertNativeBalance(uint256 expectedBalance) private view {
+        uint256 actualBalance = address(this).balance;
+        if (_amountsDiffer(actualBalance, expectedBalance)) {
+            revert UnexpectedBalance(NATIVE_TOKEN, expectedBalance, actualBalance);
+        }
+    }
+
+    function _transferNative(address to, uint256 amount) private {
+        // WHY: WCBTC unwrap must forward caller-funded native output to the caller-selected recipient.
+        // slither-disable-next-line arbitrary-send-eth
+        (bool success, ) = to.call{value: amount}("");
+        if (!success) revert TransferFailed();
     }
 
     function _isUnsupportedStageOneOutput(address tokenOut) private view returns (bool) {
@@ -429,34 +564,97 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         return JUICE.calculateShares(jusdAmount);
     }
 
-    // TODO(Stage 2): implement bridged stablecoin to svJUSD quoting.
-    function bridgedToSvJusd(address, uint256) external pure returns (uint256) {
-        _stageTwo();
+    function bridgedToSvJusd(address bridgedToken, uint256 amount) external view returns (uint256) {
+        BridgeConfig storage config = _bridgeConfigs[bridgedToken];
+        if (address(config.bridge) == address(0)) revert BridgedTokenNotFound(bridgedToken);
+        return SV_JUSD.convertToShares(_bridgedToJusdAmount(amount, config.decimals));
     }
 
-    // TODO(Stage 2): implement svJUSD to bridged stablecoin quoting.
-    function svJusdToBridged(address, uint256) external pure returns (uint256) {
-        _stageTwo();
+    function svJusdToBridged(address bridgedToken, uint256 svJusdAmount) external view returns (uint256) {
+        BridgeConfig storage config = _bridgeConfigs[bridgedToken];
+        if (address(config.bridge) == address(0)) revert BridgedTokenNotFound(bridgedToken);
+        return _jusdToBridgedAmount(SV_JUSD.convertToAssets(svJusdAmount), config.decimals);
     }
 
-    // TODO(Stage 2): implement bridged-token discovery.
-    function isBridgedToken(address) external pure returns (bool) {
-        _stageTwo();
+    function isBridgedToken(address token) external view returns (bool) {
+        return _isRegisteredBridgeToken(token);
     }
 
-    // TODO(Stage 2): implement bridged-token enumeration.
-    function getBridgedTokens() external pure returns (address[] memory) {
-        _stageTwo();
+    function getBridgedTokens() external view returns (address[] memory) {
+        return _bridgedTokens;
     }
 
-    // TODO(Stage 2): implement bridged-token registration.
-    function registerBridgedToken(address) external pure {
-        _stageTwo();
+    function registerBridgedToken(address bridge) external {
+        if (bridge == address(0)) revert InvalidBridgeConfig();
+
+        IStablecoinBridge bridgeContract = IStablecoinBridge(bridge);
+        address token = bridgeContract.usd();
+        if (token == address(0)) revert InvalidBridgeConfig();
+        if (_bridgeConfigs[token].bridge != IStablecoinBridge(address(0))) {
+            revert BridgedTokenAlreadyExists(token);
+        }
+        if (bridgeContract.JUSD() != address(JUSD)) revert InvalidBridgeConfig();
+        if (!IJuiceDollar(address(JUSD)).isMinter(bridge)) revert BridgeNotApprovedMinter(bridge);
+        if (bridgeContract.stopped()) revert BridgeStopped(bridge);
+
+        uint8 decimals = IERC20Metadata(token).decimals();
+        _bridgeConfigs[token] = BridgeConfig({bridge: bridgeContract, decimals: decimals});
+        _bridgedTokens.push(token);
+
+        IERC20(token).forceApprove(bridge, type(uint256).max);
+        JUSD.forceApprove(bridge, type(uint256).max);
+
+        emit BridgedTokenRegistered(token, bridge, msg.sender, decimals);
     }
 
-    // TODO(Stage 2): implement bridge status checks.
-    function getBridgeStatus(address) external pure returns (BridgeStatus memory) {
-        _stageTwo();
+    function getBridgeStatus(address bridgedToken) external view returns (BridgeStatus memory) {
+        BridgeConfig storage config = _bridgeConfigs[bridgedToken];
+        if (address(config.bridge) == address(0)) {
+            return
+                BridgeStatus({
+                    canMint: false,
+                    canBurn: false,
+                    mintCapacity: 0,
+                    burnCapacity: 0,
+                    mintBlockReason: "Token not supported",
+                    burnBlockReason: "Token not supported"
+                });
+        }
+
+        IStablecoinBridge bridge = config.bridge;
+        bool canMint = true;
+        string memory mintReason = "";
+        uint256 mintCapacity = 0;
+
+        if (bridge.stopped()) {
+            canMint = false;
+            mintReason = "Bridge stopped";
+        } else if (block.timestamp > bridge.horizon()) {
+            canMint = false;
+            mintReason = "Bridge expired";
+        } else {
+            uint256 minted = bridge.minted();
+            uint256 limit = bridge.limit();
+            if (minted >= limit) {
+                canMint = false;
+                mintReason = "Limit reached";
+            } else {
+                mintCapacity = limit - minted;
+            }
+        }
+
+        uint256 bridgeBalance = IERC20(bridge.usd()).balanceOf(address(bridge));
+        bool canBurn = bridgeBalance > 0;
+
+        return
+            BridgeStatus({
+                canMint: canMint,
+                canBurn: canBurn,
+                mintCapacity: mintCapacity,
+                burnCapacity: bridgeBalance,
+                mintBlockReason: mintReason,
+                burnBlockReason: canBurn ? "" : "Insufficient bridge liquidity"
+            });
     }
 
     // TODO(Stage 2): implement pool creation with user-facing token conversion.
@@ -487,8 +685,28 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         _stageTwo();
     }
 
+    function _bridgedToJusdAmount(uint256 bridgedAmount, uint8 bridgedDecimals) private view returns (uint256) {
+        if (bridgedDecimals < JUSD_DECIMALS) {
+            return bridgedAmount * 10 ** (JUSD_DECIMALS - bridgedDecimals);
+        }
+        if (bridgedDecimals > JUSD_DECIMALS) {
+            return bridgedAmount / 10 ** (bridgedDecimals - JUSD_DECIMALS);
+        }
+        return bridgedAmount;
+    }
+
+    function _jusdToBridgedAmount(uint256 jusdAmount, uint8 bridgedDecimals) private view returns (uint256) {
+        if (JUSD_DECIMALS > bridgedDecimals) {
+            return jusdAmount / 10 ** (JUSD_DECIMALS - bridgedDecimals);
+        }
+        if (JUSD_DECIMALS < bridgedDecimals) {
+            return jusdAmount * 10 ** (bridgedDecimals - JUSD_DECIMALS);
+        }
+        return jusdAmount;
+    }
+
     receive() external payable {
-        revert DirectTransferNotAccepted();
+        if (msg.sender != address(WCBTC)) revert DirectTransferNotAccepted();
     }
 }
 // slither-disable-end locked-ether

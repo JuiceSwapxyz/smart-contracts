@@ -9,6 +9,7 @@ import {
   MockEquity,
   MockERC4626,
   MockPositionManager,
+  MockStablecoinBridge,
   MockSwapRouter,
   MockWETH,
 } from "../typechain-types";
@@ -18,6 +19,7 @@ describe("JuiceSwapGatewayV2", function () {
   const DEADLINE_OFFSET = 3600;
   const ONE = ethers.parseEther("1");
   const JUICE_PRICE = ethers.parseEther("100");
+  const BRIDGED_DECIMALS = 6;
 
   async function deployGatewayV2Fixture() {
     const [owner, user, recipient] = await ethers.getSigners();
@@ -85,6 +87,32 @@ describe("JuiceSwapGatewayV2", function () {
     };
   }
 
+  async function deployGatewayV2WithBridgeFixture() {
+    const base = await deployGatewayV2Fixture();
+
+    const MockERC20Factory = await ethers.getContractFactory("MockERC20");
+    const bridgedToken = (await MockERC20Factory.deploy(
+      "Bridged USD",
+      "USDb",
+      BRIDGED_DECIMALS
+    )) as unknown as MockERC20;
+    await bridgedToken.waitForDeployment();
+
+    const MockStablecoinBridgeFactory = await ethers.getContractFactory("MockStablecoinBridge");
+    const bridge = (await MockStablecoinBridgeFactory.deploy(
+      await bridgedToken.getAddress(),
+      await base.jusd.getAddress(),
+      ethers.parseEther("1000000"),
+      52
+    )) as unknown as MockStablecoinBridge;
+    await bridge.waitForDeployment();
+
+    await base.jusd.setMinter(await bridge.getAddress(), true);
+    await base.gateway.registerBridgedToken(await bridge.getAddress());
+
+    return { ...base, bridgedToken, bridge };
+  }
+
   function protocolFee(amountIn: bigint) {
     return (amountIn * 25n + 9_999n) / 10_000n;
   }
@@ -95,6 +123,29 @@ describe("JuiceSwapGatewayV2", function () {
 
   function jusdForJuiceShares(juiceAmount: bigint) {
     return (juiceAmount * JUICE_PRICE) / ONE;
+  }
+
+  function bridgedUnits(amount: string) {
+    return ethers.parseUnits(amount, BRIDGED_DECIMALS);
+  }
+
+  function jusdForBridged(bridgedAmount: bigint) {
+    return bridgedAmount * 10n ** BigInt(18 - BRIDGED_DECIMALS);
+  }
+
+  function bridgedForJusd(jusdAmount: bigint) {
+    return jusdAmount / 10n ** BigInt(18 - BRIDGED_DECIMALS);
+  }
+
+  async function seedBridgeBurnLiquidity(
+    bridgedToken: MockERC20,
+    bridge: MockStablecoinBridge,
+    mintedJusdAmount: bigint
+  ) {
+    const bridgedAmount = bridgedForJusd(mintedJusdAmount);
+    await bridgedToken.mint(await bridge.getAddress(), bridgedAmount);
+    await bridge.setMinted(mintedJusdAmount);
+    return bridgedAmount;
   }
 
   async function mintSvJusdToUser(jusd: MockERC20, svJusd: MockERC4626, user: HardhatEthersSigner, assets: bigint) {
@@ -497,8 +548,187 @@ describe("JuiceSwapGatewayV2", function () {
     });
   });
 
-  describe("Stage 2 placeholders", function () {
-    it("reverts conversion, liquidity, bridge, and pool entrypoints with NotImplemented", async function () {
+  describe("Stage 2b native wrapping and bridged conversions", function () {
+    it("wraps native cBTC to WCBTC and unwraps WCBTC back to native cBTC", async function () {
+      const { gateway, user, recipient, wcbtc } = await loadFixture(deployGatewayV2Fixture);
+      const amountIn = ethers.parseEther("1.25");
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      await expect(
+        gateway
+          .connect(user)
+          .swapExactTokensForTokens(
+            ethers.ZeroAddress,
+            await wcbtc.getAddress(),
+            3000,
+            amountIn,
+            amountIn,
+            recipient.address,
+            deadline,
+            { value: amountIn }
+          )
+      )
+        .to.emit(gateway, "SwapExecuted")
+        .withArgs(user.address, ethers.ZeroAddress, await wcbtc.getAddress(), amountIn, amountIn);
+
+      expect(await wcbtc.balanceOf(recipient.address)).to.equal(amountIn);
+      expect(await wcbtc.balanceOf(await gateway.getAddress())).to.equal(0);
+      expect(await ethers.provider.getBalance(await gateway.getAddress())).to.equal(0);
+
+      await wcbtc.connect(user).deposit({ value: amountIn });
+      await wcbtc.connect(user).approve(await gateway.getAddress(), amountIn);
+      const recipientNativeBefore = await ethers.provider.getBalance(recipient.address);
+
+      await expect(
+        gateway
+          .connect(user)
+          .swapExactTokensForTokens(
+            await wcbtc.getAddress(),
+            ethers.ZeroAddress,
+            3000,
+            amountIn,
+            amountIn,
+            recipient.address,
+            deadline
+          )
+      )
+        .to.emit(gateway, "SwapExecuted")
+        .withArgs(user.address, await wcbtc.getAddress(), ethers.ZeroAddress, amountIn, amountIn);
+
+      expect((await ethers.provider.getBalance(recipient.address)) - recipientNativeBefore).to.equal(amountIn);
+      expect(await wcbtc.balanceOf(await gateway.getAddress())).to.equal(0);
+      expect(await ethers.provider.getBalance(await gateway.getAddress())).to.equal(0);
+
+      await expect(
+        user.sendTransaction({
+          to: await gateway.getAddress(),
+          value: 1,
+        })
+      ).to.be.revertedWithCustomError(gateway, "DirectTransferNotAccepted");
+    });
+
+    it("registers bridged stablecoins and exposes quote and bridge status views", async function () {
+      const { gateway, jusd, svJusd, bridgedToken, bridge } = await loadFixture(deployGatewayV2WithBridgeFixture);
+      const bridgedTokenAddress = await bridgedToken.getAddress();
+      const bridgeAddress = await bridge.getAddress();
+      const bridgedAmount = bridgedUnits("123.456789");
+      const jusdAmount = jusdForBridged(bridgedAmount);
+
+      expect(await gateway.isBridgedToken(bridgedTokenAddress)).to.equal(true);
+      expect(await gateway.getBridgedTokens()).to.deep.equal([bridgedTokenAddress]);
+      expect(await gateway.bridgedToSvJusd(bridgedTokenAddress, bridgedAmount)).to.equal(
+        await svJusd.convertToShares(jusdAmount)
+      );
+      expect(await gateway.svJusdToBridged(bridgedTokenAddress, jusdAmount)).to.equal(bridgedAmount);
+
+      let status = await gateway.getBridgeStatus(bridgedTokenAddress);
+      expect(status.canMint).to.equal(true);
+      expect(status.canBurn).to.equal(false);
+      expect(status.mintCapacity).to.equal(ethers.parseEther("1000000"));
+      expect(status.burnCapacity).to.equal(0);
+      expect(status.mintBlockReason).to.equal("");
+      expect(status.burnBlockReason).to.equal("Insufficient bridge liquidity");
+
+      await bridgedToken.mint(bridgeAddress, bridgedUnits("50"));
+      status = await gateway.getBridgeStatus(bridgedTokenAddress);
+      expect(status.canBurn).to.equal(true);
+      expect(status.burnCapacity).to.equal(bridgedUnits("50"));
+      expect(status.burnBlockReason).to.equal("");
+
+      await expect(gateway.registerBridgedToken(bridgeAddress))
+        .to.be.revertedWithCustomError(gateway, "BridgedTokenAlreadyExists")
+        .withArgs(bridgedTokenAddress);
+
+      const unsupportedStatus = await gateway.getBridgeStatus(await jusd.getAddress());
+      expect(unsupportedStatus.canMint).to.equal(false);
+      expect(unsupportedStatus.canBurn).to.equal(false);
+      expect(unsupportedStatus.mintBlockReason).to.equal("Token not supported");
+      expect(unsupportedStatus.burnBlockReason).to.equal("Token not supported");
+    });
+
+    it("converts bridged stablecoin to svJUSD after sending one 25 bps JUSD fee to Equity", async function () {
+      const { gateway, user, recipient, jusd, svJusd, juice, bridgedToken, bridge } = await loadFixture(
+        deployGatewayV2WithBridgeFixture
+      );
+      const bridgedAmount = bridgedUnits("20");
+      const grossJusd = jusdForBridged(bridgedAmount);
+      const expectedFee = protocolFee(grossJusd);
+      const expectedShares = grossJusd - expectedFee;
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      await bridgedToken.mint(user.address, bridgedAmount);
+      await bridgedToken.connect(user).approve(await gateway.getAddress(), bridgedAmount);
+
+      await expect(
+        gateway
+          .connect(user)
+          .swapExactTokensForTokens(
+            await bridgedToken.getAddress(),
+            await svJusd.getAddress(),
+            3000,
+            bridgedAmount,
+            expectedShares,
+            recipient.address,
+            deadline
+          )
+      )
+        .to.emit(gateway, "ProtocolFeeToEquity")
+        .withArgs(user.address, expectedFee)
+        .and.to.emit(gateway, "SwapExecuted")
+        .withArgs(
+          user.address,
+          await bridgedToken.getAddress(),
+          await svJusd.getAddress(),
+          bridgedAmount,
+          expectedShares
+        );
+
+      expect(await bridgedToken.balanceOf(await bridge.getAddress())).to.equal(bridgedAmount);
+      expect(await jusd.balanceOf(await juice.getAddress())).to.equal(expectedFee);
+      expect(await svJusd.balanceOf(recipient.address)).to.equal(expectedShares);
+      expect(await bridgedToken.balanceOf(await gateway.getAddress())).to.equal(0);
+      await expectNoGatewayStage2aResiduals(gateway, jusd, svJusd, juice);
+    });
+
+    it("converts JUSD to bridged stablecoin after sending one 25 bps JUSD fee to Equity", async function () {
+      const { gateway, user, recipient, jusd, svJusd, juice, bridgedToken, bridge } = await loadFixture(
+        deployGatewayV2WithBridgeFixture
+      );
+      const amountIn = ethers.parseEther("20");
+      const expectedFee = protocolFee(amountIn);
+      const netJusd = amountIn - expectedFee;
+      const expectedBridged = await seedBridgeBurnLiquidity(bridgedToken, bridge, netJusd);
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      await jusd.connect(user).approve(await gateway.getAddress(), amountIn);
+
+      await expect(
+        gateway
+          .connect(user)
+          .swapExactTokensForTokens(
+            await jusd.getAddress(),
+            await bridgedToken.getAddress(),
+            3000,
+            amountIn,
+            expectedBridged,
+            recipient.address,
+            deadline
+          )
+      )
+        .to.emit(gateway, "ProtocolFeeToEquity")
+        .withArgs(user.address, expectedFee)
+        .and.to.emit(gateway, "SwapExecuted")
+        .withArgs(user.address, await jusd.getAddress(), await bridgedToken.getAddress(), amountIn, expectedBridged);
+
+      expect(await jusd.balanceOf(await juice.getAddress())).to.equal(expectedFee);
+      expect(await bridgedToken.balanceOf(recipient.address)).to.equal(expectedBridged);
+      expect(await bridgedToken.balanceOf(await gateway.getAddress())).to.equal(0);
+      await expectNoGatewayStage2aResiduals(gateway, jusd, svJusd, juice);
+    });
+  });
+
+  describe("Remaining Stage 2 placeholders", function () {
+    it("reverts liquidity and pool entrypoints with NotImplemented", async function () {
       const { gateway, user, recipient, jusd, outputToken } = await loadFixture(deployGatewayV2Fixture);
       const deadline = (await time.latest()) + DEADLINE_OFFSET;
       const tokenA = await jusd.getAddress();
@@ -514,12 +744,6 @@ describe("JuiceSwapGatewayV2", function () {
       await expect(
         gateway.removeLiquidity(1, 1, tokenA, tokenB, 0, 0, recipient.address, deadline)
       ).to.be.revertedWithCustomError(gateway, "NotImplemented");
-      await expect(gateway.bridgedToSvJusd(tokenB, 1)).to.be.revertedWithCustomError(gateway, "NotImplemented");
-      await expect(gateway.svJusdToBridged(tokenB, 1)).to.be.revertedWithCustomError(gateway, "NotImplemented");
-      await expect(gateway.isBridgedToken(tokenB)).to.be.revertedWithCustomError(gateway, "NotImplemented");
-      await expect(gateway.getBridgedTokens()).to.be.revertedWithCustomError(gateway, "NotImplemented");
-      await expect(gateway.registerBridgedToken(tokenB)).to.be.revertedWithCustomError(gateway, "NotImplemented");
-      await expect(gateway.getBridgeStatus(tokenB)).to.be.revertedWithCustomError(gateway, "NotImplemented");
       await expect(gateway.createPool(tokenA, tokenB, 3000, 1)).to.be.revertedWithCustomError(
         gateway,
         "NotImplemented"
