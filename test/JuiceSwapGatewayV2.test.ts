@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
+import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { readFileSync } from "fs";
 import {
   JuiceSwapGatewayV2,
@@ -15,6 +16,8 @@ import {
 describe("JuiceSwapGatewayV2", function () {
   const INITIAL_BALANCE = ethers.parseEther("1000");
   const DEADLINE_OFFSET = 3600;
+  const ONE = ethers.parseEther("1");
+  const JUICE_PRICE = ethers.parseEther("100");
 
   async function deployGatewayV2Fixture() {
     const [owner, user, recipient] = await ethers.getSigners();
@@ -84,6 +87,37 @@ describe("JuiceSwapGatewayV2", function () {
 
   function protocolFee(amountIn: bigint) {
     return (amountIn * 25n + 9_999n) / 10_000n;
+  }
+
+  function juiceSharesForJusd(jusdAmount: bigint) {
+    return (jusdAmount * ONE) / JUICE_PRICE;
+  }
+
+  function jusdForJuiceShares(juiceAmount: bigint) {
+    return (juiceAmount * JUICE_PRICE) / ONE;
+  }
+
+  async function mintSvJusdToUser(jusd: MockERC20, svJusd: MockERC4626, user: HardhatEthersSigner, assets: bigint) {
+    await jusd.connect(user).approve(await svJusd.getAddress(), assets);
+    await svJusd.connect(user).deposit(assets, user.address);
+  }
+
+  async function investJuiceForUser(jusd: MockERC20, juice: MockEquity, user: HardhatEthersSigner, assets: bigint) {
+    await jusd.connect(user).approve(await juice.getAddress(), assets);
+    return juice.connect(user).invest(assets, 0);
+  }
+
+  async function expectNoGatewayStage2aResiduals(
+    gateway: JuiceSwapGatewayV2,
+    jusd: MockERC20,
+    svJusd: MockERC4626,
+    juice: MockEquity
+  ) {
+    const gatewayAddress = await gateway.getAddress();
+
+    expect(await jusd.balanceOf(gatewayAddress)).to.equal(0);
+    expect(await svJusd.balanceOf(gatewayAddress)).to.equal(0);
+    expect(await juice.balanceOf(gatewayAddress)).to.equal(0);
   }
 
   describe("Deployment", function () {
@@ -172,8 +206,8 @@ describe("JuiceSwapGatewayV2", function () {
         .withArgs(1n, 1n);
     });
 
-    it("keeps unsupported Stage 1 swap paths closed", async function () {
-      const { gateway, user, recipient, jusd, outputToken, svJusd, juice } = await loadFixture(deployGatewayV2Fixture);
+    it("keeps unsupported Stage 1 and deferred cBTC swap paths closed", async function () {
+      const { gateway, user, recipient, jusd, outputToken, wcbtc } = await loadFixture(deployGatewayV2Fixture);
       const deadline = (await time.latest()) + DEADLINE_OFFSET;
       const amountIn = ethers.parseEther("1");
 
@@ -193,12 +227,7 @@ describe("JuiceSwapGatewayV2", function () {
           )
       ).to.be.revertedWithCustomError(gateway, "NotImplemented");
 
-      for (const unsupportedOut of [
-        await jusd.getAddress(),
-        await svJusd.getAddress(),
-        await juice.getAddress(),
-        ethers.ZeroAddress,
-      ]) {
+      for (const unsupportedOut of [await jusd.getAddress(), await wcbtc.getAddress(), ethers.ZeroAddress]) {
         await expect(
           gateway
             .connect(user)
@@ -211,6 +240,258 @@ describe("JuiceSwapGatewayV2", function () {
               recipient.address,
               deadline
             )
+        ).to.be.revertedWithCustomError(gateway, "NotImplemented");
+      }
+    });
+  });
+
+  describe("Stage 2a direct conversions", function () {
+    it("quotes JUSD, svJUSD, and JUICE conversions with the V1 calculators", async function () {
+      const { gateway, svJusd, juice } = await loadFixture(deployGatewayV2Fixture);
+      const jusdAmount = ethers.parseEther("123");
+      const svJusdAmount = ethers.parseEther("45");
+      const juiceAmount = ethers.parseEther("2");
+
+      expect(await gateway.jusdToSvJusd(jusdAmount)).to.equal(await svJusd.convertToShares(jusdAmount));
+      expect(await gateway.svJusdToJusd(svJusdAmount)).to.equal(await svJusd.convertToAssets(svJusdAmount));
+      expect(await gateway.juiceToJusd(juiceAmount)).to.equal(await juice.calculateProceeds(juiceAmount));
+      expect(await gateway.jusdToJuice(jusdAmount)).to.equal(await juice.calculateShares(jusdAmount));
+    });
+
+    it("converts JUSD to svJUSD after sending one 25 bps JUSD fee to Equity", async function () {
+      const { gateway, user, recipient, jusd, svJusd, juice, swapRouter } = await loadFixture(deployGatewayV2Fixture);
+      const amountIn = ethers.parseEther("20");
+      const expectedFee = protocolFee(amountIn);
+      const expectedShares = amountIn - expectedFee;
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      await jusd.connect(user).approve(await gateway.getAddress(), amountIn);
+
+      await expect(
+        gateway
+          .connect(user)
+          .swapExactTokensForTokens(
+            await jusd.getAddress(),
+            await svJusd.getAddress(),
+            3000,
+            amountIn,
+            expectedShares,
+            recipient.address,
+            deadline
+          )
+      )
+        .to.emit(gateway, "ProtocolFeeToEquity")
+        .withArgs(user.address, expectedFee)
+        .and.to.emit(gateway, "SwapExecuted")
+        .withArgs(user.address, await jusd.getAddress(), await svJusd.getAddress(), amountIn, expectedShares);
+
+      expect(await jusd.balanceOf(await juice.getAddress())).to.equal(expectedFee);
+      expect(await jusd.balanceOf(await svJusd.getAddress())).to.equal(expectedShares);
+      expect(await svJusd.balanceOf(recipient.address)).to.equal(expectedShares);
+      expect(await swapRouter.swapCallCount()).to.equal(0);
+      await expectNoGatewayStage2aResiduals(gateway, jusd, svJusd, juice);
+    });
+
+    it("redeems svJUSD to JUSD, charges the fee on redeemed assets, and sends the net JUSD", async function () {
+      const { gateway, user, recipient, jusd, svJusd, juice, swapRouter } = await loadFixture(deployGatewayV2Fixture);
+      const sharesIn = ethers.parseEther("20");
+      const expectedFee = protocolFee(sharesIn);
+      const expectedJusdOut = sharesIn - expectedFee;
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      await mintSvJusdToUser(jusd, svJusd, user, sharesIn);
+      await svJusd.connect(user).approve(await gateway.getAddress(), sharesIn);
+
+      await expect(
+        gateway
+          .connect(user)
+          .swapExactTokensForTokens(
+            await svJusd.getAddress(),
+            await jusd.getAddress(),
+            3000,
+            sharesIn,
+            expectedJusdOut,
+            recipient.address,
+            deadline
+          )
+      )
+        .to.emit(gateway, "ProtocolFeeToEquity")
+        .withArgs(user.address, expectedFee)
+        .and.to.emit(gateway, "SwapExecuted")
+        .withArgs(user.address, await svJusd.getAddress(), await jusd.getAddress(), sharesIn, expectedJusdOut);
+
+      expect(await jusd.balanceOf(await juice.getAddress())).to.equal(expectedFee);
+      expect(await jusd.balanceOf(recipient.address)).to.equal(expectedJusdOut);
+      expect(await jusd.balanceOf(await svJusd.getAddress())).to.equal(0);
+      expect(await swapRouter.swapCallCount()).to.equal(0);
+      await expectNoGatewayStage2aResiduals(gateway, jusd, svJusd, juice);
+    });
+
+    it("invests net JUSD into JUICE after charging the JUSD fee", async function () {
+      const { gateway, user, recipient, jusd, svJusd, juice, swapRouter } = await loadFixture(deployGatewayV2Fixture);
+      const amountIn = ethers.parseEther("200");
+      const expectedFee = protocolFee(amountIn);
+      const expectedJuiceOut = juiceSharesForJusd(amountIn - expectedFee);
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      await jusd.connect(user).approve(await gateway.getAddress(), amountIn);
+
+      await expect(
+        gateway
+          .connect(user)
+          .swapExactTokensForTokens(
+            await jusd.getAddress(),
+            await juice.getAddress(),
+            3000,
+            amountIn,
+            expectedJuiceOut,
+            recipient.address,
+            deadline
+          )
+      )
+        .to.emit(gateway, "ProtocolFeeToEquity")
+        .withArgs(user.address, expectedFee)
+        .and.to.emit(gateway, "SwapExecuted")
+        .withArgs(user.address, await jusd.getAddress(), await juice.getAddress(), amountIn, expectedJuiceOut);
+
+      expect(await jusd.balanceOf(await juice.getAddress())).to.equal(amountIn);
+      expect(await juice.balanceOf(recipient.address)).to.equal(expectedJuiceOut);
+      expect(await swapRouter.swapCallCount()).to.equal(0);
+      await expectNoGatewayStage2aResiduals(gateway, jusd, svJusd, juice);
+    });
+
+    it("redeems JUICE to JUSD, charges the fee on proceeds, and sends net JUSD", async function () {
+      const { gateway, user, recipient, jusd, svJusd, juice, swapRouter } = await loadFixture(deployGatewayV2Fixture);
+      const sharesIn = ethers.parseEther("2");
+      const grossJusd = jusdForJuiceShares(sharesIn);
+      const expectedFee = protocolFee(grossJusd);
+      const expectedJusdOut = grossJusd - expectedFee;
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      await investJuiceForUser(jusd, juice, user, grossJusd);
+      await juice.connect(user).approve(await gateway.getAddress(), sharesIn);
+
+      await expect(
+        gateway
+          .connect(user)
+          .swapExactTokensForTokens(
+            await juice.getAddress(),
+            await jusd.getAddress(),
+            3000,
+            sharesIn,
+            expectedJusdOut,
+            recipient.address,
+            deadline
+          )
+      )
+        .to.emit(gateway, "ProtocolFeeToEquity")
+        .withArgs(user.address, expectedFee)
+        .and.to.emit(gateway, "SwapExecuted")
+        .withArgs(user.address, await juice.getAddress(), await jusd.getAddress(), sharesIn, expectedJusdOut);
+
+      expect(await jusd.balanceOf(await juice.getAddress())).to.equal(expectedFee);
+      expect(await jusd.balanceOf(recipient.address)).to.equal(expectedJusdOut);
+      expect(await juice.balanceOf(user.address)).to.equal(0);
+      expect(await swapRouter.swapCallCount()).to.equal(0);
+      await expectNoGatewayStage2aResiduals(gateway, jusd, svJusd, juice);
+    });
+
+    it("redeems svJUSD and invests only the post-fee JUSD into JUICE", async function () {
+      const { gateway, user, recipient, jusd, svJusd, juice, swapRouter } = await loadFixture(deployGatewayV2Fixture);
+      const sharesIn = ethers.parseEther("200");
+      const expectedFee = protocolFee(sharesIn);
+      const expectedJuiceOut = juiceSharesForJusd(sharesIn - expectedFee);
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      await mintSvJusdToUser(jusd, svJusd, user, sharesIn);
+      await svJusd.connect(user).approve(await gateway.getAddress(), sharesIn);
+
+      await expect(
+        gateway
+          .connect(user)
+          .swapExactTokensForTokens(
+            await svJusd.getAddress(),
+            await juice.getAddress(),
+            3000,
+            sharesIn,
+            expectedJuiceOut,
+            recipient.address,
+            deadline
+          )
+      )
+        .to.emit(gateway, "ProtocolFeeToEquity")
+        .withArgs(user.address, expectedFee)
+        .and.to.emit(gateway, "SwapExecuted")
+        .withArgs(user.address, await svJusd.getAddress(), await juice.getAddress(), sharesIn, expectedJuiceOut);
+
+      expect(await jusd.balanceOf(await juice.getAddress())).to.equal(sharesIn);
+      expect(await juice.balanceOf(recipient.address)).to.equal(expectedJuiceOut);
+      expect(await jusd.balanceOf(await svJusd.getAddress())).to.equal(0);
+      expect(await swapRouter.swapCallCount()).to.equal(0);
+      await expectNoGatewayStage2aResiduals(gateway, jusd, svJusd, juice);
+    });
+
+    it("redeems JUICE and deposits only the post-fee JUSD into svJUSD", async function () {
+      const { gateway, user, recipient, jusd, svJusd, juice, swapRouter } = await loadFixture(deployGatewayV2Fixture);
+      const sharesIn = ethers.parseEther("2");
+      const grossJusd = jusdForJuiceShares(sharesIn);
+      const expectedFee = protocolFee(grossJusd);
+      const expectedSvJusdOut = grossJusd - expectedFee;
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      await investJuiceForUser(jusd, juice, user, grossJusd);
+      await juice.connect(user).approve(await gateway.getAddress(), sharesIn);
+
+      await expect(
+        gateway
+          .connect(user)
+          .swapExactTokensForTokens(
+            await juice.getAddress(),
+            await svJusd.getAddress(),
+            3000,
+            sharesIn,
+            expectedSvJusdOut,
+            recipient.address,
+            deadline
+          )
+      )
+        .to.emit(gateway, "ProtocolFeeToEquity")
+        .withArgs(user.address, expectedFee)
+        .and.to.emit(gateway, "SwapExecuted")
+        .withArgs(user.address, await juice.getAddress(), await svJusd.getAddress(), sharesIn, expectedSvJusdOut);
+
+      expect(await jusd.balanceOf(await juice.getAddress())).to.equal(expectedFee);
+      expect(await jusd.balanceOf(await svJusd.getAddress())).to.equal(expectedSvJusdOut);
+      expect(await svJusd.balanceOf(recipient.address)).to.equal(expectedSvJusdOut);
+      expect(await juice.balanceOf(user.address)).to.equal(0);
+      expect(await swapRouter.swapCallCount()).to.equal(0);
+      await expectNoGatewayStage2aResiduals(gateway, jusd, svJusd, juice);
+    });
+
+    it("rejects Stage 2a dust and same-token fee bypasses", async function () {
+      const { gateway, user, recipient, jusd, svJusd, juice } = await loadFixture(deployGatewayV2Fixture);
+      const deadline = (await time.latest()) + DEADLINE_OFFSET;
+
+      await jusd.connect(user).approve(await gateway.getAddress(), 1n);
+      await expect(
+        gateway
+          .connect(user)
+          .swapExactTokensForTokens(
+            await jusd.getAddress(),
+            await svJusd.getAddress(),
+            3000,
+            1n,
+            0,
+            recipient.address,
+            deadline
+          )
+      )
+        .to.be.revertedWithCustomError(gateway, "InsufficientTradeAmount")
+        .withArgs(1n, 1n);
+
+      for (const token of [await jusd.getAddress(), await svJusd.getAddress(), await juice.getAddress()]) {
+        await expect(
+          gateway.connect(user).swapExactTokensForTokens(token, token, 3000, 1n, 0, recipient.address, deadline)
         ).to.be.revertedWithCustomError(gateway, "NotImplemented");
       }
     });
@@ -233,10 +514,6 @@ describe("JuiceSwapGatewayV2", function () {
       await expect(
         gateway.removeLiquidity(1, 1, tokenA, tokenB, 0, 0, recipient.address, deadline)
       ).to.be.revertedWithCustomError(gateway, "NotImplemented");
-      await expect(gateway.jusdToSvJusd(1)).to.be.revertedWithCustomError(gateway, "NotImplemented");
-      await expect(gateway.svJusdToJusd(1)).to.be.revertedWithCustomError(gateway, "NotImplemented");
-      await expect(gateway.juiceToJusd(1)).to.be.revertedWithCustomError(gateway, "NotImplemented");
-      await expect(gateway.jusdToJuice(1)).to.be.revertedWithCustomError(gateway, "NotImplemented");
       await expect(gateway.bridgedToSvJusd(tokenB, 1)).to.be.revertedWithCustomError(gateway, "NotImplemented");
       await expect(gateway.svJusdToBridged(tokenB, 1)).to.be.revertedWithCustomError(gateway, "NotImplemented");
       await expect(gateway.isBridgedToken(tokenB)).to.be.revertedWithCustomError(gateway, "NotImplemented");

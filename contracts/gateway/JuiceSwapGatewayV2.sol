@@ -61,8 +61,8 @@ interface INonfungiblePositionManagerV2 {
 
 /**
  * @title JuiceSwapGatewayV2
- * @notice Stage 1 gateway with a direct JUSD protocol fee routed to Equity.
- * @dev Stage 1 intentionally implements only JUSD exact-input ERC20 swaps.
+ * @notice Staged gateway with a direct JUSD protocol fee routed to Equity.
+ * @dev Stage 2a adds direct JUSD, svJUSD, and JUICE conversions to the Stage 1 JUSD swap path.
  */
 // WHY: V1-compatible payable entrypoints are required, but Stage 1 rejects msg.value and receive reverts.
 // slither-disable-start locked-ether
@@ -132,26 +132,31 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         address to,
         uint256 deadline
     ) external payable nonReentrant returns (uint256 amountOut) {
-        if (msg.value != 0) revert DirectTransferNotAccepted();
+        if (msg.value > 0) revert DirectTransferNotAccepted();
         if (block.timestamp > deadline) revert DeadlineExpired();
-        if (amountIn == 0) revert InvalidAmount();
+        if (amountIn < 1) revert InvalidAmount();
         if (to == address(0)) revert InvalidToken();
+
+        if (_isStageTwoDirectConversion(tokenIn, tokenOut)) {
+            return _swapStageTwoDirect(tokenIn, tokenOut, amountIn, minAmountOut, to);
+        }
+
         if (tokenIn != address(JUSD) || _isUnsupportedStageOneOutput(tokenOut)) revert NotImplemented();
 
-        uint24 effectiveFee = fee == 0 ? DEFAULT_FEE : fee;
+        uint24 effectiveFee = fee < 1 ? DEFAULT_FEE : fee;
         if (effectiveFee >= 1_000_000) revert InvalidFee(effectiveFee);
 
         uint256 jusdBalanceBefore = JUSD.balanceOf(address(this));
         JUSD.safeTransferFrom(msg.sender, address(this), amountIn);
 
         uint256 receivedInput = JUSD.balanceOf(address(this)) - jusdBalanceBefore;
-        if (receivedInput != amountIn) {
+        if (_amountsDiffer(receivedInput, amountIn)) {
             revert BalanceDeltaMismatch(address(JUSD), amountIn, receivedInput);
         }
 
         uint256 protocolFee = _protocolFee(amountIn);
         uint256 tradeAmount = amountIn - protocolFee;
-        if (protocolFee == 0 || tradeAmount == 0) {
+        if (protocolFee < 1 || tradeAmount < 1) {
             revert InsufficientTradeAmount(amountIn, protocolFee);
         }
 
@@ -177,7 +182,7 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         JUSD.forceApprove(address(SWAP_ROUTER), 0);
 
         uint256 receivedOutput = outputToken.balanceOf(address(this)) - outputBalanceBefore;
-        if (receivedOutput != routerAmountOut) {
+        if (_amountsDiffer(receivedOutput, routerAmountOut)) {
             revert BalanceDeltaMismatch(tokenOut, routerAmountOut, receivedOutput);
         }
         if (routerAmountOut < 1 || receivedOutput < minAmountOut) revert InsufficientOutput();
@@ -185,13 +190,13 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         uint256 recipientBalanceBefore = outputToken.balanceOf(to);
         outputToken.safeTransfer(to, receivedOutput);
         uint256 recipientDelta = outputToken.balanceOf(to) - recipientBalanceBefore;
-        if (recipientDelta != receivedOutput) {
+        if (_amountsDiffer(recipientDelta, receivedOutput)) {
             revert BalanceDeltaMismatch(tokenOut, receivedOutput, recipientDelta);
         }
 
         uint256 expectedJusdBalance = jusdBalanceBefore;
         uint256 actualJusdBalance = JUSD.balanceOf(address(this));
-        if (actualJusdBalance != expectedJusdBalance) {
+        if (_amountsDiffer(actualJusdBalance, expectedJusdBalance)) {
             revert UnexpectedBalance(address(JUSD), expectedJusdBalance, actualJusdBalance);
         }
 
@@ -203,9 +208,151 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         return Math.mulDiv(amountIn, PROTOCOL_FEE_BPS, BPS_DENOMINATOR, Math.Rounding.Ceil);
     }
 
+    function _amountsDiffer(uint256 actualAmount, uint256 expectedAmount) private pure returns (bool) {
+        // WHY: Exact equality is the invariant for balance deltas and residual balances; drift must revert.
+        // slither-disable-next-line incorrect-equality
+        return actualAmount != expectedAmount;
+    }
+
     function _chargeProtocolFeeToEquity(uint256 jusdAmount) internal {
         JUSD.safeTransfer(address(JUICE), jusdAmount);
         emit ProtocolFeeToEquity(msg.sender, jusdAmount);
+    }
+
+    function _isStageTwoAsset(address token) private view returns (bool) {
+        return token == address(JUSD) || token == address(SV_JUSD) || token == address(JUICE);
+    }
+
+    function _isStageTwoDirectConversion(address tokenIn, address tokenOut) private view returns (bool) {
+        return tokenIn != tokenOut && _isStageTwoAsset(tokenIn) && _isStageTwoAsset(tokenOut);
+    }
+
+    function _swapStageTwoDirect(
+        address tokenIn,
+        address tokenOut,
+        uint256 amountIn,
+        uint256 minAmountOut,
+        address to
+    ) private returns (uint256 amountOut) {
+        uint256 expectedJusdBalance = JUSD.balanceOf(address(this));
+        uint256 expectedSvJusdBalance = IERC20(address(SV_JUSD)).balanceOf(address(this));
+        uint256 expectedJuiceBalance = JUICE.balanceOf(address(this));
+
+        uint256 grossJusd = _collectStageTwoInput(tokenIn, amountIn);
+        uint256 protocolFee = _protocolFee(grossJusd);
+        uint256 netJusd = grossJusd - protocolFee;
+        if (protocolFee < 1 || netJusd < 1) {
+            revert InsufficientTradeAmount(grossJusd, protocolFee);
+        }
+
+        _chargeProtocolFeeToEquity(protocolFee);
+
+        amountOut = _convertStageTwoOutput(tokenOut, netJusd, to);
+        if (amountOut < 1 || amountOut < minAmountOut) revert InsufficientOutput();
+
+        _assertGatewayStageTwoBalances(expectedJusdBalance, expectedSvJusdBalance, expectedJuiceBalance);
+
+        emit SwapExecuted(msg.sender, tokenIn, tokenOut, amountIn, amountOut);
+        return amountOut;
+    }
+
+    function _collectStageTwoInput(address tokenIn, uint256 amountIn) private returns (uint256 grossJusd) {
+        if (tokenIn == address(JUSD)) {
+            uint256 jusdInputBalanceBefore = JUSD.balanceOf(address(this));
+            JUSD.safeTransferFrom(msg.sender, address(this), amountIn);
+            return _checkedBalanceDelta(JUSD, address(JUSD), address(this), jusdInputBalanceBefore, amountIn);
+        }
+
+        if (tokenIn == address(SV_JUSD)) {
+            IERC20 svJusd = IERC20(address(SV_JUSD));
+            uint256 svJusdBalanceBefore = svJusd.balanceOf(address(this));
+            svJusd.safeTransferFrom(msg.sender, address(this), amountIn);
+            uint256 receivedShares = _checkedBalanceDelta(
+                svJusd,
+                address(SV_JUSD),
+                address(this),
+                svJusdBalanceBefore,
+                amountIn
+            );
+
+            uint256 jusdRedeemBalanceBefore = JUSD.balanceOf(address(this));
+            uint256 redeemedAssets = SV_JUSD.redeem(receivedShares, address(this), address(this));
+            return _checkedBalanceDelta(JUSD, address(JUSD), address(this), jusdRedeemBalanceBefore, redeemedAssets);
+        }
+
+        uint256 jusdProceedsBalanceBefore = JUSD.balanceOf(address(this));
+        uint256 proceeds = JUICE.redeemFrom(msg.sender, address(this), amountIn, 0);
+        return _checkedBalanceDelta(JUSD, address(JUSD), address(this), jusdProceedsBalanceBefore, proceeds);
+    }
+
+    function _convertStageTwoOutput(address tokenOut, uint256 netJusd, address to) private returns (uint256 amountOut) {
+        if (tokenOut == address(JUSD)) {
+            return _transferStageTwoOutput(JUSD, address(JUSD), netJusd, to);
+        }
+
+        if (tokenOut == address(SV_JUSD)) {
+            IERC20 svJusd = IERC20(address(SV_JUSD));
+            uint256 recipientBalanceBefore = svJusd.balanceOf(to);
+            uint256 svJusdShares = SV_JUSD.deposit(netJusd, to);
+            return _checkedBalanceDelta(svJusd, address(SV_JUSD), to, recipientBalanceBefore, svJusdShares);
+        }
+
+        uint256 juiceBalanceBefore = JUICE.balanceOf(address(this));
+        uint256 juiceShares = JUICE.invest(netJusd, 0);
+        uint256 receivedShares = _checkedBalanceDelta(
+            IERC20(address(JUICE)),
+            address(JUICE),
+            address(this),
+            juiceBalanceBefore,
+            juiceShares
+        );
+        return _transferStageTwoOutput(IERC20(address(JUICE)), address(JUICE), receivedShares, to);
+    }
+
+    function _transferStageTwoOutput(
+        IERC20 token,
+        address tokenAddress,
+        uint256 amount,
+        address to
+    ) private returns (uint256 amountOut) {
+        uint256 recipientBalanceBefore = token.balanceOf(to);
+        token.safeTransfer(to, amount);
+        return _checkedBalanceDelta(token, tokenAddress, to, recipientBalanceBefore, amount);
+    }
+
+    function _checkedBalanceDelta(
+        IERC20 token,
+        address tokenAddress,
+        address account,
+        uint256 balanceBefore,
+        uint256 expectedDelta
+    ) private view returns (uint256 actualDelta) {
+        actualDelta = token.balanceOf(account) - balanceBefore;
+        if (_amountsDiffer(actualDelta, expectedDelta)) {
+            revert BalanceDeltaMismatch(tokenAddress, expectedDelta, actualDelta);
+        }
+        return actualDelta;
+    }
+
+    function _assertGatewayStageTwoBalances(
+        uint256 expectedJusdBalance,
+        uint256 expectedSvJusdBalance,
+        uint256 expectedJuiceBalance
+    ) private view {
+        uint256 actualJusdBalance = JUSD.balanceOf(address(this));
+        if (_amountsDiffer(actualJusdBalance, expectedJusdBalance)) {
+            revert UnexpectedBalance(address(JUSD), expectedJusdBalance, actualJusdBalance);
+        }
+
+        uint256 actualSvJusdBalance = IERC20(address(SV_JUSD)).balanceOf(address(this));
+        if (_amountsDiffer(actualSvJusdBalance, expectedSvJusdBalance)) {
+            revert UnexpectedBalance(address(SV_JUSD), expectedSvJusdBalance, actualSvJusdBalance);
+        }
+
+        uint256 actualJuiceBalance = JUICE.balanceOf(address(this));
+        if (_amountsDiffer(actualJuiceBalance, expectedJuiceBalance)) {
+            revert UnexpectedBalance(address(JUICE), expectedJuiceBalance, actualJuiceBalance);
+        }
     }
 
     function _isUnsupportedStageOneOutput(address tokenOut) private view returns (bool) {
@@ -213,7 +360,8 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
             tokenOut == NATIVE_TOKEN ||
             tokenOut == address(JUSD) ||
             tokenOut == address(SV_JUSD) ||
-            tokenOut == address(JUICE);
+            tokenOut == address(JUICE) ||
+            tokenOut == address(WCBTC);
     }
 
     function _stageTwo() private pure {
@@ -265,24 +413,20 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         _stageTwo();
     }
 
-    // TODO(Stage 2): implement JUSD to svJUSD quoting.
-    function jusdToSvJusd(uint256) external pure returns (uint256) {
-        _stageTwo();
+    function jusdToSvJusd(uint256 jusdAmount) external view returns (uint256) {
+        return SV_JUSD.convertToShares(jusdAmount);
     }
 
-    // TODO(Stage 2): implement svJUSD to JUSD quoting.
-    function svJusdToJusd(uint256) external pure returns (uint256) {
-        _stageTwo();
+    function svJusdToJusd(uint256 svJusdAmount) external view returns (uint256) {
+        return SV_JUSD.convertToAssets(svJusdAmount);
     }
 
-    // TODO(Stage 2): implement JUICE redemption quoting.
-    function juiceToJusd(uint256) external pure returns (uint256) {
-        _stageTwo();
+    function juiceToJusd(uint256 juiceAmount) external view returns (uint256) {
+        return JUICE.calculateProceeds(juiceAmount);
     }
 
-    // TODO(Stage 2): implement JUICE investment quoting.
-    function jusdToJuice(uint256) external pure returns (uint256) {
-        _stageTwo();
+    function jusdToJuice(uint256 jusdAmount) external view returns (uint256) {
+        return JUICE.calculateShares(jusdAmount);
     }
 
     // TODO(Stage 2): implement bridged stablecoin to svJUSD quoting.
