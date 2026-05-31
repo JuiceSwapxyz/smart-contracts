@@ -781,16 +781,15 @@ describe("JuiceSwapGatewayV2", function () {
 
     it("rejects a fee above the 5% cap", async function () {
       const { gateway, owner } = await loadFixture(deployGatewayV2Fixture);
-      await expect(
-        gateway.connect(owner).setProtocolFeeBps(501)
-      ).to.be.revertedWith("Protocol fee too high");
+      await expect(gateway.connect(owner).setProtocolFeeBps(501)).to.be.revertedWith("Protocol fee too high");
     });
 
     it("rejects fee changes from a non-owner", async function () {
       const { gateway, user } = await loadFixture(deployGatewayV2Fixture);
-      await expect(
-        gateway.connect(user).setProtocolFeeBps(50)
-      ).to.be.revertedWithCustomError(gateway, "OwnableUnauthorizedAccount");
+      await expect(gateway.connect(user).setProtocolFeeBps(50)).to.be.revertedWithCustomError(
+        gateway,
+        "OwnableUnauthorizedAccount"
+      );
     });
   });
 });
