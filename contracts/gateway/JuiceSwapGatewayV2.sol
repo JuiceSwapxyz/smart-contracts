@@ -394,6 +394,7 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, Ownable, ReentrancyGuard {
 
             uint256 jusdMintBalanceBefore = JUSD.balanceOf(address(this));
             config.bridge.mint(receivedBridged);
+            _assertTokenBalance(bridgedToken, tokenIn, address(this), bridgedBalanceBefore);
             uint256 mintedJusd = _bridgedToJusdAmount(receivedBridged, config.decimals);
             return _checkedBalanceDelta(JUSD, address(JUSD), address(this), jusdMintBalanceBefore, mintedJusd);
         }
