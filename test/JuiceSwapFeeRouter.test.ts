@@ -346,9 +346,10 @@ describe("JuiceSwapFeeRouter", function () {
 
     // The swap entrypoint is non-payable (no ETH custody path); native value is
     // rejected outright, and direct native sends revert with NativeUnsupported.
-    await expect(
-      user.sendTransaction({ to: await feeRouter.getAddress(), value: 1 })
-    ).to.be.revertedWithCustomError(feeRouter, "NativeUnsupported");
+    await expect(user.sendTransaction({ to: await feeRouter.getAddress(), value: 1 })).to.be.revertedWithCustomError(
+      feeRouter,
+      "NativeUnsupported"
+    );
 
     await expect(
       feeRouter.connect(user).swapExactInput({
@@ -492,9 +493,10 @@ describe("JuiceSwapFeeRouter", function () {
 
     it("rejects fee and allowlist changes from a non-owner", async function () {
       const { feeRouter, outsider } = await loadFixture(deployFixture);
-      await expect(
-        feeRouter.connect(outsider).setProtocolFeeBps(50)
-      ).to.be.revertedWithCustomError(feeRouter, "OwnableUnauthorizedAccount");
+      await expect(feeRouter.connect(outsider).setProtocolFeeBps(50)).to.be.revertedWithCustomError(
+        feeRouter,
+        "OwnableUnauthorizedAccount"
+      );
       await expect(
         feeRouter.connect(outsider).setFeeTarget(outsider.address, true, false)
       ).to.be.revertedWithCustomError(feeRouter, "OwnableUnauthorizedAccount");
