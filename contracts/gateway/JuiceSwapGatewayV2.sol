@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {IJuiceSwapGateway} from "./interfaces/IJuiceSwapGateway.sol";
 import {IStablecoinBridge} from "./interfaces/IStablecoinBridge.sol";
 import {IJuiceDollar} from "@juicedollar/jusd/contracts/interface/IJuiceDollar.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -69,7 +70,7 @@ interface INonfungiblePositionManagerV2 {
  */
 // WHY: V1-compatible payable entrypoints are required, but Stage 1 rejects msg.value and receive reverts.
 // slither-disable-start locked-ether
-contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
+contract JuiceSwapGatewayV2 is IJuiceSwapGateway, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     IERC20 public immutable JUSD;
@@ -93,7 +94,9 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
     address private constant NATIVE_TOKEN = address(0);
     uint24 public constant DEFAULT_FEE = 3000;
     uint256 public constant PROTOCOL_FEE_BPS = 25;
+    uint256 public constant MAX_PROTOCOL_FEE_BPS = 500;
     uint256 public constant BPS_DENOMINATOR = 10_000;
+    uint256 public protocolFeeBps = PROTOCOL_FEE_BPS;
 
     error InvalidToken();
     error InvalidAmount();
@@ -113,6 +116,7 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
     error BridgeStopped(address bridge);
 
     event ProtocolFeeToEquity(address indexed payer, uint256 jusdAmount);
+    event ProtocolFeeBpsUpdated(uint256 oldBps, uint256 newBps);
 
     constructor(
         address _jusd,
@@ -121,7 +125,7 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         address _wcbtc,
         address _swapRouter,
         address _positionManager
-    ) {
+    ) Ownable(msg.sender) {
         JUSD = IERC20(_jusd);
         SV_JUSD = IERC4626(_svJusd);
         JUICE = IEquityV2(_juice);
@@ -177,11 +181,13 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
 
         uint256 protocolFee = _protocolFee(amountIn);
         uint256 tradeAmount = amountIn - protocolFee;
-        if (protocolFee < 1 || tradeAmount < 1) {
+        if ((protocolFeeBps > 0 && protocolFee < 1) || tradeAmount < 1) {
             revert InsufficientTradeAmount(amountIn, protocolFee);
         }
 
-        _chargeProtocolFeeToEquity(protocolFee);
+        if (protocolFee > 0) {
+            _chargeProtocolFeeToEquity(protocolFee);
+        }
 
         IERC20 outputToken = IERC20(tokenOut);
         uint256 outputBalanceBefore = outputToken.balanceOf(address(this));
@@ -225,8 +231,15 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         return receivedOutput;
     }
 
-    function _protocolFee(uint256 amountIn) internal pure returns (uint256) {
-        return Math.mulDiv(amountIn, PROTOCOL_FEE_BPS, BPS_DENOMINATOR, Math.Rounding.Ceil);
+    function setProtocolFeeBps(uint256 newBps) external onlyOwner {
+        require(newBps <= MAX_PROTOCOL_FEE_BPS, "Protocol fee too high");
+        uint256 oldBps = protocolFeeBps;
+        protocolFeeBps = newBps;
+        emit ProtocolFeeBpsUpdated(oldBps, newBps);
+    }
+
+    function _protocolFee(uint256 amountIn) internal view returns (uint256) {
+        return Math.mulDiv(amountIn, protocolFeeBps, BPS_DENOMINATOR, Math.Rounding.Ceil);
     }
 
     function _amountsDiffer(uint256 actualAmount, uint256 expectedAmount) private pure returns (bool) {
@@ -276,11 +289,13 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         uint256 grossJusd = _collectStageTwoInput(tokenIn, amountIn);
         uint256 protocolFee = _protocolFee(grossJusd);
         uint256 netJusd = grossJusd - protocolFee;
-        if (protocolFee < 1 || netJusd < 1) {
+        if ((protocolFeeBps > 0 && protocolFee < 1) || netJusd < 1) {
             revert InsufficientTradeAmount(grossJusd, protocolFee);
         }
 
-        _chargeProtocolFeeToEquity(protocolFee);
+        if (protocolFee > 0) {
+            _chargeProtocolFeeToEquity(protocolFee);
+        }
 
         amountOut = _convertStageTwoOutput(tokenOut, netJusd, to);
         if (amountOut < 1 || amountOut < minAmountOut) revert InsufficientOutput();

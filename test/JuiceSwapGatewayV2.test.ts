@@ -761,4 +761,36 @@ describe("JuiceSwapGatewayV2", function () {
       ).to.be.revertedWithCustomError(gateway, "DirectTransferNotAccepted");
     });
   });
+
+  describe("Governance fee adjustment", function () {
+    it("exposes the default fee, the mutable fee, the 5% cap, and Governor ownership", async function () {
+      const { gateway, owner } = await loadFixture(deployGatewayV2Fixture);
+      expect(await gateway.PROTOCOL_FEE_BPS()).to.equal(25);
+      expect(await gateway.protocolFeeBps()).to.equal(25);
+      expect(await gateway.MAX_PROTOCOL_FEE_BPS()).to.equal(500);
+      expect(await gateway.owner()).to.equal(owner.address);
+    });
+
+    it("lets the owner (governance) adjust the fee up to the 5% cap and emits the event", async function () {
+      const { gateway, owner } = await loadFixture(deployGatewayV2Fixture);
+      await expect(gateway.connect(owner).setProtocolFeeBps(500))
+        .to.emit(gateway, "ProtocolFeeBpsUpdated")
+        .withArgs(25, 500);
+      expect(await gateway.protocolFeeBps()).to.equal(500);
+    });
+
+    it("rejects a fee above the 5% cap", async function () {
+      const { gateway, owner } = await loadFixture(deployGatewayV2Fixture);
+      await expect(
+        gateway.connect(owner).setProtocolFeeBps(501)
+      ).to.be.revertedWith("Protocol fee too high");
+    });
+
+    it("rejects fee changes from a non-owner", async function () {
+      const { gateway, user } = await loadFixture(deployGatewayV2Fixture);
+      await expect(
+        gateway.connect(user).setProtocolFeeBps(50)
+      ).to.be.revertedWithCustomError(gateway, "OwnableUnauthorizedAccount");
+    });
+  });
 });
