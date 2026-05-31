@@ -63,8 +63,9 @@ interface INonfungiblePositionManagerV2 {
 
 /**
  * @title JuiceSwapGatewayV2
- * @notice Staged gateway with a direct JUSD protocol fee routed to Equity.
- * @dev Stage 2a adds direct JUSD, svJUSD, and JUICE conversions to the Stage 1 JUSD swap path.
+ * @notice Fee gateway that mirrors JuiceSwapGateway v1 swap/conversion behavior.
+ * @dev V2 adds a 25 bps JUSD protocol fee routed to the JUICE/Equity reserve on every swap/conversion path.
+ *      Liquidity and pool management remain intentionally out of scope and stay on JuiceSwapGateway v1.
  */
 // WHY: V1-compatible payable entrypoints are required, but Stage 1 rejects msg.value and receive reverts.
 // slither-disable-start locked-ether
@@ -503,7 +504,8 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         revert NotImplemented();
     }
 
-    // TODO(Stage 2): implement automatic JUSD/svJUSD conversion liquidity.
+    /// @notice Liquidity management is intentionally out of scope for this fee gateway.
+    /// @dev Use JuiceSwapGateway v1 for liquidity operations; this placeholder deliberately reverts with NotImplemented.
     function addLiquidity(
         address,
         address,
@@ -520,7 +522,8 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         _stageTwo();
     }
 
-    // TODO(Stage 2): implement position liquidity increases.
+    /// @notice Position liquidity increases are intentionally out of scope for this fee gateway.
+    /// @dev Use JuiceSwapGateway v1 for liquidity operations; this placeholder deliberately reverts with NotImplemented.
     function increaseLiquidity(
         uint256,
         address,
@@ -534,7 +537,8 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         _stageTwo();
     }
 
-    // TODO(Stage 2): implement position liquidity removal.
+    /// @notice Position liquidity removal is intentionally out of scope for this fee gateway.
+    /// @dev Use JuiceSwapGateway v1 for liquidity operations; this placeholder deliberately reverts with NotImplemented.
     function removeLiquidity(
         uint256,
         uint128,
@@ -657,12 +661,14 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
             });
     }
 
-    // TODO(Stage 2): implement pool creation with user-facing token conversion.
+    /// @notice Pool creation is intentionally out of scope for this fee gateway.
+    /// @dev Use JuiceSwapGateway v1 for pool management; this placeholder deliberately reverts with NotImplemented.
     function createPool(address, address, uint24, uint160) external pure returns (address) {
         _stageTwo();
     }
 
-    // TODO(Stage 2): implement pool creation plus initial liquidity.
+    /// @notice Pool creation with initial liquidity is intentionally out of scope for this fee gateway.
+    /// @dev Use JuiceSwapGateway v1 for pool and liquidity management; this placeholder deliberately reverts with NotImplemented.
     function createPoolAndAddLiquidity(
         address,
         address,
@@ -680,7 +686,8 @@ contract JuiceSwapGatewayV2 is IJuiceSwapGateway, ReentrancyGuard {
         _stageTwo();
     }
 
-    // TODO(Stage 2): implement pool lookup with user-facing token conversion.
+    /// @notice Pool lookup is intentionally out of scope for this fee gateway.
+    /// @dev Use JuiceSwapGateway v1 for pool lookup; this placeholder deliberately reverts with NotImplemented.
     function getPool(address, address, uint24) external pure returns (address, bool) {
         _stageTwo();
     }
