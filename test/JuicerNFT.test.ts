@@ -22,8 +22,10 @@ describe("JuicerNFT", function () {
     return signature;
   }
 
+  const MAX_SUPPLY = 10_000;
+
   async function deployNFTFixture() {
-    const [, signer, user1, user2, attacker] = await ethers.getSigners();
+    const [owner, signer, user1, user2, attacker, newSigner] = await ethers.getSigners();
 
     // Use dynamic timestamps relative to current block time
     const currentTime = await time.latest();
@@ -35,11 +37,12 @@ describe("JuicerNFT", function () {
       signer.address,
       METADATA_URI,
       CAMPAIGN_START,
-      CAMPAIGN_END
+      CAMPAIGN_END,
+      MAX_SUPPLY
     )) as unknown as JuicerNFT;
     await nft.waitForDeployment();
 
-    return { nft, signer, user1, user2, attacker, CAMPAIGN_START, CAMPAIGN_END };
+    return { nft, owner, signer, user1, user2, attacker, newSigner, CAMPAIGN_START, CAMPAIGN_END };
   }
 
   async function deployNFTDuringCampaignFixture() {
@@ -83,7 +86,8 @@ describe("JuicerNFT", function () {
           ethers.ZeroAddress,
           METADATA_URI,
           currentTime + 3600,
-          currentTime + 7 * 24 * 3600
+          currentTime + 7 * 24 * 3600,
+          MAX_SUPPLY
         )
       ).to.be.revertedWith("Invalid signer address");
     });
@@ -408,4 +412,91 @@ describe("JuicerNFT", function () {
         .to.be.revertedWithCustomError(nft, "CampaignEnded");
     });
   });
+
+  describe("Signer Rotation", function () {
+    it("Should set owner to the deployer", async function () {
+      const { nft, owner } = await loadFixture(deployNFTFixture);
+      expect(await nft.owner()).to.equal(owner.address);
+    });
+
+    it("Should let the owner rotate the signer and emit SignerUpdated", async function () {
+      const { nft, owner, signer, newSigner } = await loadFixture(deployNFTFixture);
+      await expect(nft.connect(owner).setSigner(newSigner.address))
+        .to.emit(nft, "SignerUpdated")
+        .withArgs(signer.address, newSigner.address);
+      expect(await nft.signer()).to.equal(newSigner.address);
+    });
+
+    it("Should reject claims signed by the old signer after rotation", async function () {
+      const { nft, owner, signer, newSigner, user1 } = await loadFixture(deployNFTDuringCampaignFixture);
+      await nft.connect(owner).setSigner(newSigner.address);
+      const staleSig = await generateSignature(await nft.getAddress(), user1.address, signer);
+      await expect(nft.connect(user1).claim(staleSig)).to.be.revertedWithCustomError(nft, "InvalidSignature");
+    });
+
+    it("Should accept claims signed by the new signer after rotation", async function () {
+      const { nft, owner, newSigner, user1 } = await loadFixture(deployNFTDuringCampaignFixture);
+      await nft.connect(owner).setSigner(newSigner.address);
+      const sig = await generateSignature(await nft.getAddress(), user1.address, newSigner);
+      await expect(nft.connect(user1).claim(sig)).to.emit(nft, "NFTClaimed");
+      expect(await nft.ownerOf(1)).to.equal(user1.address);
+    });
+
+    it("Should revert setSigner from a non-owner", async function () {
+      const { nft, attacker, newSigner } = await loadFixture(deployNFTFixture);
+      await expect(nft.connect(attacker).setSigner(newSigner.address))
+        .to.be.revertedWithCustomError(nft, "OwnableUnauthorizedAccount")
+        .withArgs(attacker.address);
+    });
+
+    it("Should revert setSigner to the zero address", async function () {
+      const { nft, owner } = await loadFixture(deployNFTFixture);
+      await expect(nft.connect(owner).setSigner(ethers.ZeroAddress)).to.be.revertedWith("Invalid signer address");
+    });
+  });
+
+  describe("Max Supply Cap", function () {
+    async function deployLowCapFixture() {
+      const [owner, signer, user1, user2, user3] = await ethers.getSigners();
+      const currentTime = await time.latest();
+      const CAMPAIGN_START = currentTime + 3600;
+      const CAMPAIGN_END = currentTime + 7 * 24 * 3600;
+      const JuicerNFT = await ethers.getContractFactory("JuicerNFT");
+      const nft = (await JuicerNFT.deploy(
+        signer.address,
+        METADATA_URI,
+        CAMPAIGN_START,
+        CAMPAIGN_END,
+        2
+      )) as unknown as JuicerNFT;
+      await nft.waitForDeployment();
+      await time.increaseTo(CAMPAIGN_START + 1000);
+      return { nft, signer, user1, user2, user3 };
+    }
+
+    it("Should expose the configured maxSupply", async function () {
+      const { nft } = await loadFixture(deployLowCapFixture);
+      expect(await nft.maxSupply()).to.equal(2);
+    });
+
+    it("Should allow maxSupply claims then revert the next valid claim", async function () {
+      const { nft, signer, user1, user2, user3 } = await loadFixture(deployLowCapFixture);
+      const addr = await nft.getAddress();
+      await nft.connect(user1).claim(await generateSignature(addr, user1.address, signer));
+      await nft.connect(user2).claim(await generateSignature(addr, user2.address, signer));
+      const validThird = await generateSignature(addr, user3.address, signer);
+      await expect(nft.connect(user3).claim(validThird)).to.be.revertedWithCustomError(nft, "MaxSupplyReached");
+      expect(await nft.totalSupply()).to.equal(2);
+    });
+
+    it("Should reject deployment with a zero maxSupply", async function () {
+      const [, signer] = await ethers.getSigners();
+      const currentTime = await time.latest();
+      const JuicerNFT = await ethers.getContractFactory("JuicerNFT");
+      await expect(
+        JuicerNFT.deploy(signer.address, METADATA_URI, currentTime + 3600, currentTime + 7 * 24 * 3600, 0)
+      ).to.be.revertedWith("Invalid max supply");
+    });
+  });
+
 });

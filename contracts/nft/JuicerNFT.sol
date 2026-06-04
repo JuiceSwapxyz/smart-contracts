@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title JuicerNFT
@@ -23,7 +24,7 @@ import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
  *  - Signature verification by trusted backend signer
  *  - Static metadata URI (IPFS) shared by all minted tokens
  */
-contract JuicerNFT is ERC721 {
+contract JuicerNFT is ERC721, Ownable {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
@@ -33,8 +34,11 @@ contract JuicerNFT is ERC721 {
     /// @notice Campaign end timestamp
     uint256 public immutable CAMPAIGN_END;
 
-    /// @notice Backend API signer address (verifies eligibility)
-    address public immutable signer;
+    /// @notice Backend API signer address (verifies eligibility); rotatable by the owner
+    address public signer;
+
+    /// @notice Hard cap on the total number of mintable NFTs
+    uint256 public immutable maxSupply;
 
     /// @notice Base URI for token metadata (IPFS)
     string private _baseTokenURI;
@@ -48,6 +52,9 @@ contract JuicerNFT is ERC721 {
     /// @notice Emitted when an NFT is successfully claimed
     event NFTClaimed(address indexed claimer, uint256 indexed tokenId);
 
+    /// @notice Emitted when the backend signer is rotated by the owner
+    event SignerUpdated(address indexed oldSigner, address indexed newSigner);
+
     /// @notice Campaign has not started yet
     error CampaignNotStarted();
 
@@ -60,6 +67,9 @@ contract JuicerNFT is ERC721 {
     /// @notice Invalid signature from backend
     error InvalidSignature();
 
+    /// @notice The max-supply cap has been reached
+    error MaxSupplyReached();
+
     /**
      * @notice Initialize the Juicer NFT contract
      * @param _signer Backend API signer address
@@ -71,13 +81,16 @@ contract JuicerNFT is ERC721 {
         address _signer,
         string memory baseTokenURI,
         uint256 _campaignStart,
-        uint256 _campaignEnd
-    ) ERC721("Juicer", "JUICER") {
+        uint256 _campaignEnd,
+        uint256 _maxSupply
+    ) ERC721("Juicer", "JUICER") Ownable(msg.sender) {
         require(_signer != address(0), "Invalid signer address");
         require(_campaignStart < _campaignEnd, "Invalid campaign period");
         require(_campaignEnd > block.timestamp, "Campaign already ended");
+        require(_maxSupply > 0, "Invalid max supply");
 
         signer = _signer;
+        maxSupply = _maxSupply;
         _baseTokenURI = baseTokenURI;
         CAMPAIGN_START = _campaignStart;
         CAMPAIGN_END = _campaignEnd;
@@ -106,6 +119,9 @@ contract JuicerNFT is ERC721 {
 
         if (recovered != signer) revert InvalidSignature();
 
+        // Enforce the hard supply cap
+        if (_tokenIdCounter >= maxSupply) revert MaxSupplyReached();
+
         // Mark as claimed
         hasClaimed[msg.sender] = true;
 
@@ -114,6 +130,17 @@ contract JuicerNFT is ERC721 {
         _safeMint(msg.sender, _tokenIdCounter);
 
         emit NFTClaimed(msg.sender, _tokenIdCounter);
+    }
+
+    /**
+     * @notice Rotate the backend signer (e.g. after a key compromise)
+     * @param newSigner New backend signer address
+     */
+    function setSigner(address newSigner) external onlyOwner {
+        require(newSigner != address(0), "Invalid signer address");
+        address oldSigner = signer;
+        signer = newSigner;
+        emit SignerUpdated(oldSigner, newSigner);
     }
 
     /**
